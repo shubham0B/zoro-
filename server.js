@@ -247,6 +247,9 @@ app.get('/auth/google/callback', async (req, res) => {
 
   try {
     const result = await handleOAuthCallback(code);
+    if (result.isRecruitment) {
+      return res.redirect(`${subpath || ''}/recruitment/?auth=success&email=${encodeURIComponent(result.email)}`);
+    }
     res.redirect(`${dash}/?auth=success&email=${encodeURIComponent(result.email)}`);
   } catch (err) {
     res.redirect(`${dash}/?auth=error&msg=${encodeURIComponent(err.message)}`);

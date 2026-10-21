@@ -8,9 +8,9 @@ import QRCode from 'qrcode';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { query, getSetting, logActivity } from '../database/db.js';
+import { query, getSetting, getRecruitmentSetting, logActivity } from '../database/db.js';
 import { handleDirectorChat, draftExecutiveEmail, analyzeEmails, summarizeWhatsAppChats, getEdTechAndAiNews } from '../services/geminiService.js';
-import { fetchUnreadEmails, sendVerifiedEmail, searchGmail } from '../services/gmailService.js';
+import { fetchUnreadEmails, sendVerifiedEmail, searchGmail, isRecruitmentEmailData } from '../services/gmailService.js';
 import { getSchedulesByDate, parseScheduleFromText, parseScheduleIntentWithAI, addSchedule, getUpcomingSchedules } from '../services/scheduleService.js';
 import { generateExecutiveBriefingPdf } from '../services/pdfService.js';
 
@@ -828,9 +828,21 @@ async function handleBotIncomingMessage(jid, senderPhone, text) {
       }
     }
 
+    const recruitmentEmail = ((await getRecruitmentSetting('RECRUITMENT_EMAIL')) || 'careers.jecrchospital@jecrcu.edu.in').toLowerCase();
+
+    // Query genuine director emails, strictly excluding recruitment & candidate records
     const recentEmails = await query(
-      `SELECT sender_name, subject, summary, priority, action_required FROM email_summaries 
-       ORDER BY id DESC LIMIT 10`
+      `SELECT sender_name, subject, summary, priority, action_required 
+       FROM email_summaries 
+       WHERE sender_email NOT LIKE '%careers%' 
+         AND sender_email NOT LIKE '%recruitment%' 
+         AND sender_email NOT LIKE '%jecrchospital%' 
+         AND subject NOT LIKE '%application%' 
+         AND subject NOT LIKE '%resume%' 
+         AND summary NOT LIKE '%candidate%' 
+         AND LOWER(sender_email) != ?
+       ORDER BY id DESC LIMIT 10`,
+      [recruitmentEmail]
     );
 
     const pendingDrafts = await query(
@@ -854,7 +866,17 @@ async function handleBotIncomingMessage(jid, senderPhone, text) {
                           lowerText.includes('.edu');
 
     if (isEmailSearch) {
+      // Check if user is asking for today's email report, daily report, or recent emails
+      const isEmailReport = 
+        (lowerText.includes('report') && (lowerText.includes('email') || lowerText.includes('mail') || lowerText.includes('gmail'))) ||
+        lowerText.includes('today report') ||
+        lowerText.includes('daily report') ||
+        lowerText.includes('inbox report') ||
+        lowerText.includes('email summary') ||
+        lowerText.includes('gmail summary');
+
       const isGeneralRecent = 
+        isEmailReport ||
         lowerText.includes('latest email') || 
         lowerText.includes('recent email') || 
         lowerText.includes('new email') || 
@@ -863,14 +885,21 @@ async function handleBotIncomingMessage(jid, senderPhone, text) {
         lowerText.includes('last email') ||
         lowerText.includes('unread email') ||
         lowerText.includes('give me email') ||
+        lowerText.includes('today email') ||
+        lowerText.includes('email today') ||
+        lowerText.includes('gmail today') ||
+        lowerText.includes('today gmail') ||
+        lowerText.includes('gmail report') ||
+        lowerText.includes('email report') ||
         lowerText.includes('aaya email');
 
       if (isGeneralRecent) {
-        console.log(`[Director Query] Fetching latest inbox emails directly...`);
+        console.log(`[Director Query] Fetching latest official inbox emails directly (recruitment excluded)...`);
         try {
-          const liveRecent = await fetchUnreadEmails(6, false);
+          const liveRecent = await fetchUnreadEmails(8, false);
           if (liveRecent && liveRecent.length > 0) {
-            matchedEmails.push(...liveRecent);
+            const cleanRecent = liveRecent.filter(e => !isRecruitmentEmailData(e, recruitmentEmail));
+            matchedEmails.push(...cleanRecent);
           }
         } catch (e) {}
       } else {
@@ -889,8 +918,8 @@ async function handleBotIncomingMessage(jid, senderPhone, text) {
             const person = fromMatch[1].trim();
             queryTerm = `from:${person} OR "${person}"`;
           } else {
-            // 3. Clean keywords (remove stop/filler words while preserving dots and hyphens)
-            const stopWords = /\b(find|search|check|look for|show me|give me|get me|the|email|mail|emails|mails|inbox|gmail|latest|recent|recently|today|yesterday|last|new|old|regarding|about|related to|of|from|to|for|with|bheja|aaya|kya|hai|tha|thi|the|se|ko|ka|ki|ke|kuch|koi|bhi|wala|wali|wale|me|mein|please|plz|sir|assistant|is|are|any)\b/gi;
+            // 3. Clean keywords (remove stop/filler words while preserving dots and hyphens, and stripping report/summary/status words so they don't corrupt the Gmail search)
+            const stopWords = /\b(find|search|check|look for|show me|give me|get me|the|email|mail|emails|mails|inbox|gmail|latest|recent|recently|today|yesterday|last|new|old|regarding|about|related to|of|from|to|for|with|bheja|aaya|kya|hai|tha|thi|the|se|ko|ka|ki|ke|kuch|koi|bhi|wala|wali|wale|me|mein|please|plz|sir|assistant|is|are|any|report|reports|summary|briefing|status)\b/gi;
             const cleanKeyword = text
               .replace(stopWords, ' ')
               .replace(/[?!,;'"()[\]{}<>*#~]/g, ' ')
@@ -905,8 +934,9 @@ async function handleBotIncomingMessage(jid, senderPhone, text) {
           try {
             const liveFound = await searchGmail(queryTerm, 15);
             if (liveFound && liveFound.length > 0) {
-              matchedEmails.push(...liveFound);
-              for (const em of liveFound) {
+              const cleanFound = liveFound.filter(e => !isRecruitmentEmailData(e, recruitmentEmail));
+              matchedEmails.push(...cleanFound);
+              for (const em of cleanFound) {
                 try {
                   await query(
                     `INSERT INTO email_summaries (gmail_id, sender_email, sender_name, subject, snippet, date_received, priority, summary, action_required)
@@ -921,11 +951,12 @@ async function handleBotIncomingMessage(jid, senderPhone, text) {
             console.warn('[Director Query] Gmail search failed:', searchErr.message);
           }
         } else {
-          // If query term reduced to empty, fallback to fetching recent emails
+          // If query term reduced to empty, fallback to fetching recent official emails
           try {
-            const liveRecent = await fetchUnreadEmails(6, false);
+            const liveRecent = await fetchUnreadEmails(8, false);
             if (liveRecent && liveRecent.length > 0) {
-              matchedEmails.push(...liveRecent);
+              const cleanRecent = liveRecent.filter(e => !isRecruitmentEmailData(e, recruitmentEmail));
+              matchedEmails.push(...cleanRecent);
             }
           } catch (e) {}
         }
@@ -1087,38 +1118,51 @@ export async function triggerDailyBriefing(targetJid = null) {
     // 1. Fetch Today's Schedules
     const schedules = await getSchedulesByDate(todayStr);
 
-    // 2. Fetch & Analyze Unread Emails
+    // 2. Fetch & Analyze Unread Emails (Strictly Director only, excluding recruitment)
+    const recruitmentEmail = ((await getRecruitmentSetting('RECRUITMENT_EMAIL')) || 'careers.jecrchospital@jecrcu.edu.in').toLowerCase();
     let analyzedEmails = [];
     try {
       const rawEmails = await fetchUnreadEmails(12);
       if (rawEmails && rawEmails.length > 0) {
-        analyzedEmails = await analyzeEmails(rawEmails);
-        for (const em of analyzedEmails) {
-          try {
-            await query(
-              `INSERT INTO email_summaries (gmail_id, sender_email, sender_name, subject, snippet, date_received, priority, summary, action_required)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-               ON DUPLICATE KEY UPDATE priority = VALUES(priority), summary = VALUES(summary), action_required = VALUES(action_required)`,
-              [em.id, em.senderEmail || '', em.senderName || '', em.subject || '', em.snippet || '', em.date || '', em.priority, em.summary, em.action_required]
-            );
-          } catch (err) {}
+        const cleanRaw = rawEmails.filter(e => !isRecruitmentEmailData(e, recruitmentEmail));
+        if (cleanRaw.length > 0) {
+          analyzedEmails = await analyzeEmails(cleanRaw);
+          for (const em of analyzedEmails) {
+            if (isRecruitmentEmailData(em, recruitmentEmail)) continue;
+            try {
+              await query(
+                `INSERT INTO email_summaries (gmail_id, sender_email, sender_name, subject, snippet, date_received, priority, summary, action_required)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE priority = VALUES(priority), summary = VALUES(summary), action_required = VALUES(action_required)`,
+                [em.id, em.senderEmail || '', em.senderName || '', em.subject || '', em.snippet || '', em.date || '', em.priority, em.summary, em.action_required]
+              );
+            } catch (err) {}
+          }
         }
       }
     } catch (e) {
       console.warn('[Briefing] Live email fetch error:', e.message);
     }
 
-    // Always query stored emails from database (prioritizing Urgent, excluding outgoing/self emails)
+    // Always query stored emails from database (prioritizing Urgent, strictly excluding recruitment & self emails)
     let storedEmails = [];
     try {
       storedEmails = await query(
         `SELECT id, gmail_id, sender_email, sender_name, subject, snippet, date_received, priority, summary, action_required 
          FROM email_summaries 
          WHERE sender_email NOT LIKE '%amit.dheemant%' 
+           AND sender_email NOT LIKE '%careers%' 
+           AND sender_email NOT LIKE '%recruitment%' 
+           AND sender_email NOT LIKE '%jecrchospital%' 
+           AND subject NOT LIKE '%application%' 
+           AND subject NOT LIKE '%resume%' 
+           AND summary NOT LIKE '%candidate%' 
+           AND LOWER(sender_email) != ?
          ORDER BY 
            CASE WHEN priority = 'Urgent' THEN 1 WHEN priority = 'High' THEN 2 ELSE 3 END, 
            id DESC 
-         LIMIT 10`
+         LIMIT 10`,
+        [recruitmentEmail]
       );
     } catch (e) {
       storedEmails = [];

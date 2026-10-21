@@ -280,6 +280,26 @@ async function createTables() {
     console.error('[Database Error] Failed to seed default admin:', err.message);
   }
 
+  // Clean separation: Purge any recruitment/candidate emails from Director's email_summaries & google_tokens
+  try {
+    await pool.query(`
+      DELETE FROM email_summaries 
+      WHERE sender_email LIKE '%careers%' 
+         OR sender_email LIKE '%recruitment%' 
+         OR sender_email LIKE '%jecrchospital%' 
+         OR subject LIKE '%application for%' 
+         OR subject LIKE '%curriculum vitae%' 
+         OR summary LIKE '%candidate%'
+    `);
+    await pool.query(`
+      DELETE FROM google_tokens 
+      WHERE email LIKE '%careers.jecrchospital%' 
+         OR email IN (SELECT email FROM recruitment_tokens)
+    `);
+  } catch (cleanErr) {
+    // Non-critical cleanup
+  }
+
   console.log(`[Database] All MySQL tables verified/created successfully.`);
 }
 

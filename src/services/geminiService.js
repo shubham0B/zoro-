@@ -313,11 +313,18 @@ Instructions:
    - For BODY, use clean natural paragraphs with real line breaks. Do NOT write literal "\n" or escaped slashes.
    - Do NOT duplicate the email body or subject outside the action block. Only give a polite 1-line lead-in like:
      "Sir, I have prepared the email draft for your review:"
-6. If the Director asks to see, get, receive, or send the executive report / briefing / PDF (e.g., "Give me the report", "Give me pdf", "Give me here", "Send the PDF here", "Report bhejo", "PDF document do"):
+6. If the Director asks for a Gmail report or email briefing (e.g., "give me the gmail today report", "today email report", "gmail report", "check emails", "unread emails"):
+   - CRITICAL DATA SEPARATION: Recruitment and candidate applications are handled in a separate system. NEVER mention or merge recruiter team emails, candidate applications, resumes, or hospital recruitment data here.
+   - Present ONLY genuine executive/university emails belonging to the Director's connected email.
+   - Summarize the emails cleanly:
+     * 📧 *Total New/Key Emails*
+     * Numbered list with: *Sender*, *Subject*, *Time/Date*, and a 1-line *Key Summary*
+     * Any *Urgent Action Items* required from the Director.
+7. If the Director asks to see, get, receive, or send the executive report / briefing / PDF (e.g., "Give me the report", "Give me pdf", "Give me here", "Send the PDF here", "Report bhejo", "PDF document do"):
    ALWAYS include the action block:
    [ACTION:SEND_BRIEFING_PDF]
    And a courteous lead-in: "Sir, I am generating your real-time Executive Daily Briefing PDF and sending the document directly here on WhatsApp right now."
-7. For general queries, answer directly with executive clarity.
+8. For general queries, answer directly with executive clarity.
 `;
 
     const response = await callGeminiWithFallback(client, {

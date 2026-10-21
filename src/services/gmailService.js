@@ -1,7 +1,40 @@
 import { google } from 'googleapis';
-import { query, getSetting, setSetting, logActivity } from '../database/db.js';
+import { query, getSetting, setSetting, getRecruitmentSetting, setRecruitmentSetting, logActivity } from '../database/db.js';
 import dotenv from 'dotenv';
 dotenv.config();
+
+/**
+ * Robust check to identify recruitment/candidate/hiring emails so they never contaminate Director's WhatsApp automation
+ */
+export function isRecruitmentEmailData(emailObj, recruitmentEmail = '') {
+  if (!emailObj) return false;
+  const sEmail = (emailObj.senderEmail || emailObj.from || emailObj.sender_email || '').toLowerCase();
+  const sName = (emailObj.senderName || emailObj.sender_name || '').toLowerCase();
+  const subj = (emailObj.subject || '').toLowerCase();
+  const snip = (emailObj.snippet || emailObj.summary || emailObj.body || '').toLowerCase();
+  const recEmail = (recruitmentEmail || 'careers.jecrchospital@jecrcu.edu.in').toLowerCase();
+
+  // 1. Direct address match with recruitment mailbox
+  if (recEmail && (sEmail.includes(recEmail) || subj.includes(recEmail))) return true;
+  if (sEmail.includes('careers.jecrchospital') || sEmail.includes('careers@') || sEmail.includes('recruitment@') || sEmail.includes('career@') || sEmail.includes('deepak.talkudar')) return true;
+
+  // 2. Recruitment / candidate screening / resume keywords
+  const recruitKeywords = [
+    'candidate application',
+    'application for the post',
+    'application for position',
+    'job application',
+    'curriculum vitae',
+    'recruitment confirmation',
+    'jecrc hospital recruitment',
+    'recruiter team',
+    'recruitment report',
+    'candidates report',
+    'hiring report',
+    'application id: jecrc'
+  ];
+  return recruitKeywords.some(kw => subj.includes(kw) || snip.includes(kw));
+}
 
 const SCOPES = [
   'https://www.googleapis.com/auth/gmail.readonly',
@@ -51,9 +84,37 @@ export async function handleOAuthCallback(code) {
   // Get user's email address
   const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
   const userInfo = await oauth2.userinfo.get();
-  const directorEmail = userInfo.data.email;
+  const connectedEmail = (userInfo.data.email || '').trim().toLowerCase();
 
-  // Save tokens in MySQL
+  // Guard: If this is the recruitment email, do NOT save it as Director WhatsApp automation!
+  const recruitmentEmail = ((await getRecruitmentSetting('RECRUITMENT_EMAIL')) || 'careers.jecrchospital@jecrcu.edu.in').toLowerCase();
+  if (connectedEmail === recruitmentEmail || connectedEmail.includes('careers.jecrchospital') || connectedEmail.includes('career.jecrchospital')) {
+    // Route it strictly to recruitment_tokens table
+    await query(
+      `INSERT INTO recruitment_tokens (email, refresh_token, access_token, expiry_date, scope)
+       VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         refresh_token = COALESCE(VALUES(refresh_token), refresh_token),
+         access_token = VALUES(access_token),
+         expiry_date = VALUES(expiry_date),
+         scope = VALUES(scope),
+         updated_at = CURRENT_TIMESTAMP`,
+      [
+        connectedEmail,
+        tokens.refresh_token || null,
+        tokens.access_token,
+        tokens.expiry_date || 0,
+        tokens.scope || SCOPES.join(' ')
+      ]
+    );
+    await setRecruitmentSetting('RECRUITMENT_EMAIL', connectedEmail);
+    // Remove from google_tokens to ensure complete isolation
+    await query('DELETE FROM google_tokens WHERE LOWER(email) = ?', [connectedEmail]);
+    await logActivity('RECRUITMENT', `Recruitment Gmail connected via Google OAuth: ${connectedEmail}`, 'INFO');
+    return { email: connectedEmail, success: true, isRecruitment: true };
+  }
+
+  // Save tokens in MySQL for Director WhatsApp Automation
   await query(
     `INSERT INTO google_tokens (email, refresh_token, access_token, expiry_date, scope)
      VALUES (?, ?, ?, ?, ?)
@@ -64,7 +125,7 @@ export async function handleOAuthCallback(code) {
        scope = VALUES(scope),
        updated_at = CURRENT_TIMESTAMP`,
     [
-      directorEmail,
+      connectedEmail,
       tokens.refresh_token || null,
       tokens.access_token,
       tokens.expiry_date || 0,
@@ -72,20 +133,43 @@ export async function handleOAuthCallback(code) {
     ]
   );
 
-  await setSetting('DIRECTOR_EMAIL', directorEmail);
-  await logActivity('GMAIL', `Director Gmail connected successfully: ${directorEmail}`, 'INFO');
-  return { email: directorEmail, success: true };
+  await setSetting('DIRECTOR_EMAIL', connectedEmail);
+  // Ensure no recruitment emails linger in google_tokens
+  await query(
+    `DELETE FROM google_tokens 
+     WHERE LOWER(email) = ? OR LOWER(email) LIKE '%careers%'`,
+    [recruitmentEmail]
+  );
+  await logActivity('GMAIL', `Director Gmail connected successfully: ${connectedEmail}`, 'INFO');
+  return { email: connectedEmail, success: true };
 }
 
 /**
- * Retrieves authenticated Gmail instance using stored tokens
+ * Retrieves authenticated Gmail instance strictly for Director's WhatsApp automation
  */
 export async function getAuthenticatedGmail() {
   const oauth2Client = await getOAuth2Client();
   if (!oauth2Client) return null;
 
-  const rows = await query('SELECT * FROM google_tokens ORDER BY id DESC LIMIT 1');
-  if (rows.length === 0) return null;
+  // STRICT SEPARATION: Director Gmail must match DIRECTOR_EMAIL or non-recruitment google_tokens
+  const directorEmail = await getSetting('DIRECTOR_EMAIL');
+  const recruitmentEmail = ((await getRecruitmentSetting('RECRUITMENT_EMAIL')) || 'careers.jecrchospital@jecrcu.edu.in').toLowerCase();
+
+  let rows = [];
+  if (directorEmail) {
+    rows = await query('SELECT * FROM google_tokens WHERE LOWER(email) = ? LIMIT 1', [directorEmail.toLowerCase()]);
+  }
+  if (!rows || rows.length === 0) {
+    rows = await query(
+      `SELECT * FROM google_tokens 
+       WHERE LOWER(email) != ? 
+         AND LOWER(email) NOT LIKE '%careers%' 
+         AND LOWER(email) NOT LIKE '%recruitment%' 
+       ORDER BY id DESC LIMIT 1`,
+      [recruitmentEmail]
+    );
+  }
+  if (!rows || rows.length === 0) return null;
 
   const tokenRecord = rows[0];
   oauth2Client.setCredentials({
@@ -108,7 +192,7 @@ export async function getAuthenticatedGmail() {
 }
 
 /**
- * Fetches recent emails from Director's inbox (both unread and recently read)
+ * Fetches recent emails from Director's inbox (strictly filtering out recruitment & candidate emails)
  */
 export async function fetchUnreadEmails(limit = 15, unreadOnly = false) {
   const gmail = await getAuthenticatedGmail();
@@ -128,7 +212,9 @@ export async function fetchUnreadEmails(limit = 15, unreadOnly = false) {
     });
 
     const messages = listRes.data.messages || [];
-    return await parseGmailMessageList(gmail, messages);
+    const parsed = await parseGmailMessageList(gmail, messages);
+    const recruitmentEmail = ((await getRecruitmentSetting('RECRUITMENT_EMAIL')) || 'careers.jecrchospital@jecrcu.edu.in').toLowerCase();
+    return parsed.filter(e => !isRecruitmentEmailData(e, recruitmentEmail));
   } catch (error) {
     console.error('[Gmail Service] Failed to fetch emails:', error.message);
     logActivity('GMAIL', `Failed to fetch emails: ${error.message}`, 'ERROR');
@@ -137,7 +223,7 @@ export async function fetchUnreadEmails(limit = 15, unreadOnly = false) {
 }
 
 /**
- * Searches Gmail directly with a keyword query across ALL messages (read and unread)
+ * Searches Gmail directly with a keyword query across Director's messages (strictly filtering out recruitment)
  */
 export async function searchGmail(searchQuery, limit = 10) {
   const gmail = await getAuthenticatedGmail();
@@ -172,8 +258,10 @@ export async function searchGmail(searchQuery, limit = 10) {
     }
 
     const results = await parseGmailMessageList(gmail, messages);
-    console.log(`[Gmail API] Search for "${cleanQ}" returned ${results.length} email(s)`);
-    return results;
+    const recruitmentEmail = ((await getRecruitmentSetting('RECRUITMENT_EMAIL')) || 'careers.jecrchospital@jecrcu.edu.in').toLowerCase();
+    const filtered = results.filter(e => !isRecruitmentEmailData(e, recruitmentEmail));
+    console.log(`[Gmail API] Search for "${cleanQ}" returned ${filtered.length} email(s) (recruitment excluded)`);
+    return filtered;
   } catch (error) {
     console.error('[Gmail Service] Search error:', error.message);
     return [];
@@ -286,11 +374,27 @@ export async function sendVerifiedEmail({ to, subject, body, draftId = null }) {
 }
 
 /**
- * Gets Gmail Connector status
+ * Gets Gmail Connector status strictly for Director's WhatsApp automation
  */
 export async function getGmailStatus() {
-  const rows = await query('SELECT email, updated_at FROM google_tokens ORDER BY id DESC LIMIT 1');
-  if (rows.length > 0) {
+  const directorEmail = await getSetting('DIRECTOR_EMAIL');
+  const recruitmentEmail = ((await getRecruitmentSetting('RECRUITMENT_EMAIL')) || 'careers.jecrchospital@jecrcu.edu.in').toLowerCase();
+
+  let rows = [];
+  if (directorEmail) {
+    rows = await query('SELECT email, updated_at FROM google_tokens WHERE LOWER(email) = ? LIMIT 1', [directorEmail.toLowerCase()]);
+  }
+  if (!rows || rows.length === 0) {
+    rows = await query(
+      `SELECT email, updated_at FROM google_tokens 
+       WHERE LOWER(email) != ? 
+         AND LOWER(email) NOT LIKE '%careers%' 
+         AND LOWER(email) NOT LIKE '%recruitment%' 
+       ORDER BY id DESC LIMIT 1`,
+      [recruitmentEmail]
+    );
+  }
+  if (rows && rows.length > 0) {
     return {
       connected: true,
       email: rows[0].email,
@@ -305,8 +409,10 @@ export async function getGmailStatus() {
 }
 
 export async function disconnectGmail() {
-  await query('DELETE FROM google_tokens');
+  const recruitmentEmail = ((await getRecruitmentSetting('RECRUITMENT_EMAIL')) || 'careers.jecrchospital@jecrcu.edu.in').toLowerCase();
+  await query('DELETE FROM google_tokens WHERE LOWER(email) != ?', [recruitmentEmail]);
   await query('DELETE FROM system_settings WHERE key_name = "DIRECTOR_EMAIL"');
   await logActivity('GMAIL', 'Director Gmail disconnected/unlinked via Dashboard', 'WARN');
   return true;
 }
+
