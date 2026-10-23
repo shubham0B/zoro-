@@ -78,7 +78,11 @@ function sanitizeText(str) {
     .replace(/“/g, '"')
     .replace(/”/g, '"')
     .replace(/—/g, ' - ')
-    .replace(/–/g, '-');
+    .replace(/–/g, '-')
+    .replace(/•/g, '-')
+    .replace(/[^\x20-\x7E\n\r\t]/g, '')
+    .replace(/[ \t]+/g, ' ')
+    .trim();
 }
 
 /**
@@ -97,7 +101,7 @@ function drawScheduleSection(doc, startY, schedules = []) {
     doc.fontSize(8.5).font('Helvetica-Bold').fillColor('#374151')
        .text("Open Calendar for Strategic Governance", 62, y + 11);
     doc.fontSize(8).font('Helvetica').fillColor('#6B7280')
-       .text("No official meetings or appointments scheduled on the Director's calendar for today.", 62, y + 25);
+       .text("No official meetings or appointments scheduled on the calendar for today.", 62, y + 25);
     doc.restore();
     return y + 60;
   }
@@ -210,6 +214,89 @@ function drawEditorialCategory(doc, categoryTitle, items = [], state) {
   state.y += 18;
 }
 
+function drawEmailsCategory(doc, categoryTitle, items = [], state) {
+  if (!items || items.length === 0) return;
+
+  if (state.y + 70 > doc.page.height - 70) {
+    doc.addPage();
+    drawPageTopHeader(doc, state.topTimestamp);
+    state.y = 52;
+  }
+
+  // Category Header
+  doc.fontSize(8.5).font('Helvetica-Bold').fillColor('#111827')
+     .text(categoryTitle.toUpperCase(), 48, state.y, { characterSpacing: 1.2 });
+  state.y += 18;
+
+  items.forEach((item, index) => {
+    const titleText = sanitizeText(item.title || 'Inbound Email');
+    const senderText = sanitizeText(item.sender || '');
+    const summaryText = sanitizeText(item.summary || (item.body && !item.sender ? item.body : ''));
+    const actionText = sanitizeText(item.action || '');
+
+    doc.fontSize(10).font('Times-Bold');
+    const titleH = doc.heightOfString(titleText, { width: 475 });
+
+    let senderH = 0;
+    if (senderText) {
+      doc.fontSize(8.5).font('Helvetica');
+      senderH = doc.heightOfString(`From: ${senderText}`, { width: 475 }) + 3;
+    }
+
+    doc.fontSize(9).font('Helvetica');
+    const summaryH = summaryText ? doc.heightOfString(summaryText, { width: 475, lineGap: 3 }) : 0;
+
+    let actionH = 0;
+    if (actionText) {
+      doc.fontSize(8.5).font('Helvetica-Bold');
+      actionH = doc.heightOfString(`Action: ${actionText}`, { width: 475 }) + 3;
+    }
+
+    const totalH = titleH + senderH + summaryH + actionH + 16;
+
+    if (state.y + totalH > doc.page.height - 75) {
+      doc.addPage();
+      drawPageTopHeader(doc, state.topTimestamp);
+      state.y = 52;
+    }
+
+    // Number on left
+    doc.fontSize(9).font('Helvetica').fillColor('#9CA3AF')
+       .text(String(index + 1), 48, state.y);
+
+    // Subject / Title
+    doc.fontSize(10).font('Times-Bold').fillColor('#111827')
+       .text(titleText, 72, state.y, { width: 475 });
+
+    let currentY = state.y + titleH + 3;
+
+    // Sender
+    if (senderText) {
+      doc.fontSize(8.5).font('Helvetica-Oblique').fillColor('#6B7280')
+         .text(`From: ${senderText}`, 72, currentY, { width: 475 });
+      currentY += senderH;
+    }
+
+    // Summary / Overview
+    if (summaryText) {
+      doc.fontSize(9).font('Helvetica').fillColor('#374151')
+         .text(summaryText, 72, currentY, { width: 475, lineGap: 3 });
+      currentY += summaryH + 3;
+    }
+
+    // Action Item
+    if (actionText) {
+      doc.fontSize(8.5).font('Helvetica-Bold').fillColor('#92400E')
+         .text(`Action: ${actionText}`, 72, currentY, { width: 475 });
+      currentY += actionH;
+    }
+
+    state.y = currentY + 10;
+  });
+
+  state.y += 14;
+}
+
 export async function generateExecutiveBriefingPdf({
   dateStr,
   directorName = null,
@@ -229,10 +316,13 @@ export async function generateExecutiveBriefingPdf({
   const safeDate = dateStr.replace(/[^0-9-]/g, '_');
   const filePath = path.join(outputDir, `executive_briefing_${safeDate}.pdf`);
 
-  // Resolve Director Name
+  // Resolve User / Director Name (Default to Yash, never Dheemant)
   let resolvedDirectorName = directorName;
-  if (!resolvedDirectorName) {
-    resolvedDirectorName = (await getSetting('DIRECTOR_NAME')) || 'Dheemant';
+  if (!resolvedDirectorName || resolvedDirectorName.toLowerCase().includes('dheemant')) {
+    resolvedDirectorName = (await getSetting('USER_NAME')) || (await getSetting('DIRECTOR_NAME')) || 'Yash';
+  }
+  if (!resolvedDirectorName || resolvedDirectorName.toLowerCase().includes('dheemant')) {
+    resolvedDirectorName = 'Yash';
   }
 
   // Synthesize editorial content strictly from real data
@@ -245,8 +335,7 @@ export async function generateExecutiveBriefingPdf({
     directorName: resolvedDirectorName,
     schedules,
     emails,
-    chats: chatsList,
-    edTechNews
+    chats: chatsList
   });
 
   const topTimestamp = getFormattedTopTimestamp();
@@ -282,9 +371,11 @@ export async function generateExecutiveBriefingPdf({
     doc.fontSize(8.5).font('Helvetica').fillColor('#6B7280')
        .text(dateFormatted, 48, state.y, { characterSpacing: 1.5 });
 
-    // Hero Headline
+    // Hero Headline (strictly addressing Yash)
     state.y = 88;
-    const cleanHeadline = sanitizeText(briefData.headline);
+    const cleanHeadline = sanitizeText(briefData.headline)
+      .replace(/Director\s+Dheemant/gi, 'Yash')
+      .replace(/Dheemant/gi, 'Yash');
     doc.fontSize(22).font('Times-Bold').fillColor('#111827')
        .text(cleanHeadline, 48, state.y, { width: 499, lineGap: 3 });
 
@@ -300,19 +391,18 @@ export async function generateExecutiveBriefingPdf({
 
     // Categories (rendered ONLY if real items exist)
     if (briefData.needsAttention && briefData.needsAttention.length > 0) {
-      drawEditorialCategory(doc, 'CRITICAL INCOMING CORRESPONDENCE & EMAILS', briefData.needsAttention, state);
+      drawEmailsCategory(doc, 'CRITICAL INCOMING CORRESPONDENCE & EMAILS', briefData.needsAttention, state);
     }
     if (briefData.whatsappUpdates && briefData.whatsappUpdates.length > 0) {
       drawEditorialCategory(doc, 'PRIORITY COMMUNICATIONS & WHATSAPP UPDATES', briefData.whatsappUpdates, state);
     }
-    if (briefData.aiEdTech && briefData.aiEdTech.length > 0) {
-      drawEditorialCategory(doc, 'STRATEGIC AI & TECH INNOVATION RADAR', briefData.aiEdTech, state);
-    }
+    // Strategic AI & Tech Innovation Radar has been removed per user instruction
 
     // Final Footnote on last page
     doc.page.margins.bottom = 0;
     doc.fontSize(8.5).font('Helvetica-Oblique').fillColor('#6B7280')
        .text(`Generated by ${assistantName} · Live omnichannel sync with Calendar, Gmail & WhatsApp.`, 48, doc.page.height - 58, { width: 499, lineBreak: false });
+
 
     // Apply Page Numbers & Domain Reference across all buffered pages
     const range = doc.bufferedPageRange();

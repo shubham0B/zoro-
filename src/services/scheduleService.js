@@ -1,17 +1,19 @@
 import { query, logActivity } from '../database/db.js';
+import { getLocalDateStr, getLocalTimeStr, getLocalDayOfWeek, getTomorrowDateStr, getFullLocalDateTimeStr } from '../utils/dateUtils.js';
 
 export async function addSchedule({ date, time_slot, title, description = '', location = "Director's Office", priority = 'Normal', created_by = 'PA' }) {
+  const scheduleDate = date || getLocalDateStr();
   const result = await query(
     `INSERT INTO schedules (date, time_slot, title, description, location, priority, created_by)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [date, time_slot, title, description, location, priority, created_by]
+    [scheduleDate, time_slot, title, description, location, priority, created_by]
   );
-  await logActivity('SCHEDULE', `New meeting scheduled: ${title} on ${date} at ${time_slot}`, 'INFO');
+  await logActivity('SCHEDULE', `New meeting scheduled: ${title} on ${scheduleDate} at ${time_slot}`, 'INFO');
   return result.insertId;
 }
 
 export async function getSchedulesByDate(date) {
-  const formattedDate = date instanceof Date ? date.toISOString().split('T')[0] : date;
+  const formattedDate = date instanceof Date ? getLocalDateStr(date) : (date || getLocalDateStr());
   return await query(
     `SELECT * FROM schedules WHERE date = ? ORDER BY time_slot ASC`,
     [formattedDate]
@@ -19,7 +21,7 @@ export async function getSchedulesByDate(date) {
 }
 
 export async function getUpcomingSchedules() {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalDateStr();
   return await query(
     `SELECT * FROM schedules WHERE date >= ? ORDER BY date ASC, time_slot ASC LIMIT 20`,
     [today]
@@ -37,7 +39,7 @@ export async function deleteSchedule(id) {
  * "Tomorrow schedule: 11am Exam Board, 3pm Dean Council"
  */
 export async function parseScheduleFromText(text, targetDate = null) {
-  const dateToUse = targetDate || new Date().toISOString().split('T')[0];
+  const dateToUse = targetDate || getLocalDateStr();
   const cleaned = text.replace(/^!schedule\s*/i, '').trim();
   const items = cleaned.split(/;|\n/);
   const added = [];
@@ -70,10 +72,10 @@ export async function parseScheduleFromText(text, targetDate = null) {
  * Uses Gemini AI to understand natural language schedule commands from the PA
  */
 export async function parseScheduleIntentWithAI(text, referenceDate = null) {
-  const ref = referenceDate || new Date().toISOString().split('T')[0];
-  const now = new Date();
-  const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long' });
-  const tomorrowStr = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+  const ref = referenceDate || getLocalDateStr();
+  const dayOfWeek = getLocalDayOfWeek();
+  const tomorrowStr = getTomorrowDateStr();
+  const currentTime = getLocalTimeStr();
 
   try {
     const { getGeminiClient, callGeminiWithFallback } = await import('./geminiService.js');
@@ -86,6 +88,7 @@ The Director's PA is messaging on WhatsApp to manage the Director's calendar.
 
 Current Context:
 - Today's Date: ${ref} (${dayOfWeek})
+- Current Time: ${currentTime} (IST)
 - Tomorrow's Date: ${tomorrowStr}
 
 PA's WhatsApp Message: "${text}"

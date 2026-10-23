@@ -1,5 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
 import { getSetting, logActivity } from '../database/db.js';
+import { getLocalDateStr, getLocalTimeStr, getLocalDayOfWeek, getTomorrowDateStr, getFullLocalDateTimeStr } from '../utils/dateUtils.js';
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -7,7 +8,7 @@ let aiClient = null;
 
 export async function getGeminiModel() {
   const dbModel = await getSetting('GEMINI_MODEL');
-  const chosenModel = dbModel || process.env.GEMINI_MODEL || 'gemini-3.5-flash';
+  const chosenModel = dbModel || process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
   return chosenModel;
 }
 
@@ -30,8 +31,8 @@ export async function getGeminiClient() {
  * Robust wrapper that calls Gemini with automatic fallback models on 503 or overload spikes
  */
 export async function callGeminiWithFallback(client, options) {
-  const primaryModel = (await getGeminiModel()) || 'gemini-3.5-flash';
-  const candidates = [primaryModel, 'gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.7-flash'];
+  const primaryModel = (await getGeminiModel()) || 'gemini-3.5-flash-lite';
+  const candidates = [primaryModel, 'gemini-3.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.5-flash'];
   const models = [...new Set(candidates)];
   let lastErr = null;
 
@@ -278,15 +279,21 @@ Persona setting: ${persona} (adaptive mode).
 You communicate crisply, proactively, respectfully, and efficiently (in English or modern conversational Hinglish matching the user's tone).
 
 Current Context Available:
-- Today's Date: ${new Date().toISOString().split('T')[0]}
-- Tomorrow's Date: ${new Date(Date.now() + 86400000).toISOString().split('T')[0]}
+- Today's Date: ${getLocalDateStr()} (${getLocalDayOfWeek()})
+- Current Time: ${getLocalTimeStr()} (IST)
+- Current Full Date & Time: ${getFullLocalDateTimeStr()}
+- Tomorrow's Date: ${getTomorrowDateStr()}
 - Scheduled Meetings (Today & Upcoming): ${JSON.stringify(context.schedules || [])}
+- Currently Pending Scheduled WhatsApp Messages: ${JSON.stringify(context.scheduledMessages || [])}
 - Recent WhatsApp Messages from primary phone: ${JSON.stringify(context.whatsappMessages || [])}
 - Recent Important Emails: ${JSON.stringify(context.recentEmails || [])}
 - Emails Found via Live Gmail Search (Read & Unread): ${JSON.stringify(context.matchedEmails || [])}
 - Pending Email Drafts: ${JSON.stringify(context.pendingDrafts || [])}
 - Recent Chat Conversation History with User: ${JSON.stringify(context.conversationHistory || [])}
 - WhatsApp Historical Messages Matching Query: ${JSON.stringify(context.matchedWhatsAppMessages || [])}
+- Target WhatsApp Entity / Contact / Group: ${context.targetName || 'None'}
+- Requested Message Count: ${context.requestedCount || 'Default'}
+- Total Available Messages in Database for Target: ${context.totalFound !== undefined ? context.totalFound : (context.matchedWhatsAppMessages || []).length}
 
 User's Message / Query: "${query}"
 
@@ -299,11 +306,30 @@ Instructions:
    - Compare the query date against "Today's Date" and "Tomorrow's Date".
    - Check "Scheduled Meetings (Today & Upcoming)" for matching dates.
    - Present scheduled meetings with time, agenda, and location!
-3. If the user asks about past WhatsApp messages or what someone texted:
-   - Check 'WhatsApp Historical Messages Matching Query' and 'Recent WhatsApp Messages'.
-   - Summarize factually with sender, date/time, and content.
+3. If the user asks about past WhatsApp messages, requests recent chats, or asks for messages from a contact or group (e.g. "Tell me last 10 messages from yuvraj", "Tell me last 5 messages from section E", "last 10 chats of the group or the individual"):
+   a) EXACT MESSAGE COUNT & HISTORY AVAILABILITY:
+      - Always look at 'WhatsApp Historical Messages Matching Query' (or 'Recent WhatsApp Messages').
+      - If the user requested N messages (e.g. 5 or 10):
+        * If fewer than N messages exist in the database (e.g. user requested 10 messages, but only 4 total messages exist in the database):
+          You MUST explicitly clarify upfront:
+          "Yuvraj Sharma ki chat history mein kul yahi 4 messages hain (aur koi purane messages recorded nahi hain):"
+          or "Here are all 4 messages currently recorded in your chat history with Yuvraj Sharma (no earlier messages recorded):"
+        * If N messages are provided in context, output ALL N messages without cutting off, summarizing away, or omitting any!
+   b) MESSAGE FORMAT & LABELS:
+      - Present each message in a clean, numbered list:
+        1. *[Sender Name]* ([Incoming/Outgoing]): "[Exact Message Text]" ([Time])
+        Example:
+        1. *Section E* (Incoming): "Start he nahi kra abhi toh 🤣" (Yesterday at 9:22 PM)
+        2. *Director / You* (Outgoing): "Are bhai achha samajh gya" (Yesterday at 9:26 PM)
+      - Note: Messages with is_from_me = 1 were sent BY THE USER ("Director / You" / Outgoing). Messages with is_from_me = 0 were received (Incoming).
+      - If the user asks what they texted to a contact and no messages from the user (is_from_me = 1) exist, but the contact sent incoming messages (is_from_me = 0), explain clearly: "You haven't sent any messages to [Contact] recently, but [Contact] texted you: [list messages]".
+      - If the user simply types a contact's name (e.g. "Yuvraj Sharma E2"), summarize their recent conversation messages and offer to send a reply for them!
+   c) STRICT TIMESTAMP FORMATTING RULE:
+      - ALWAYS display message timestamps using the human-readable 'time' field provided (e.g. "Yesterday at 9:22 PM", "Today at 2:30 AM", "Oct 21, 8:59 AM").
+      - NEVER EVER output raw Unix numeric timestamps like "(Timestamp: 1792770752)" or any raw epoch numbers under ANY circumstances!
+
 4. ADVANCED WHATSAPP INTENT UNDERSTANDING & MESSAGE CRAFTING:
-   When the user asks to text, message, ping, or tell someone on WhatsApp:
+   When the user asks to text, message, ping, or tell someone on WhatsApp (immediate delivery):
    a) Recipient Resolution:
       - Understand who the message is intended for. Check the query AND "Recent Chat Conversation History".
       - If a phone number is provided (e.g. 9309313044, +919309313044), use that phone number directly as TO.
@@ -316,19 +342,43 @@ Instructions:
       [ACTION:WHATSAPP_REPLY | TO:recipient_phone_or_name | MESSAGE:message_content]
       Accompany with a courteous 1-line lead-in confirming the action.
       Example: [ACTION:WHATSAPP_REPLY | TO:9309313044 | MESSAGE:Meeting confirmed for 4 PM]
-5. If the user wants to send or draft an email:
+
+5. SCHEDULE WHATSAPP MESSAGE (Delayed / Future Delivery):
+   When the user asks to SCHEDULE a WhatsApp message to be sent at a future time or date (e.g., "Schedule a text to 9309313044 at 5:30 PM: Hello", "Schedule message to Yuvraj tomorrow at 11 AM", "Ping Alex in 15 minutes saying are you free?"):
+   a) Extract recipient (phone or name) as TO.
+   b) Extract target time/date as TIME (e.g. "at 5:30 PM", "tomorrow at 11 AM", "in 15 mins", "shaam 6 baje").
+   c) Extract or craft the message content as MESSAGE.
+   d) Output the action block:
+      [ACTION:SCHEDULE_WHATSAPP | TO:recipient_phone_or_name | TIME:time_expression | MESSAGE:message_content]
+      Accompany with a polite 1-line confirmation lead-in.
+
+6. If the user asks whether any emails require immediate attention and/or asks to draft a reply (e.g. "Are there any mails which require my immediate attention if yes draft a reply"):
+   - Review the emails in "Emails Found via Live Gmail Search" and "Recent Important Emails".
+   - If an email requires attention (e.g. CI/build failures, pending requests, urgent messages):
+     a) State clearly what the email is and why it needs attention.
+     b) IMMEDIATELY output the draft action block:
+        [ACTION:DRAFT_EMAIL | TO:recipient_email | SUBJECT:subject_line | BODY:body_content]
+   - If none of the emails require urgent attention, state clearly that all recent emails are routine/marketing/informational, and offer to draft a reply to any specific one if they wish.
+7. If the user wants to send or draft an email:
    NEVER say the email is already sent! Prepare the draft and output:
    [ACTION:DRAFT_EMAIL | TO:recipient_email | SUBJECT:subject_line | BODY:body_content]
    CRITICAL FOR EMAIL DRAFT:
    - For BODY, use clean natural paragraphs with real line breaks. Do NOT write literal "\\n".
+   - Professional email structure:
+     * Polite opening greeting (e.g., "Dear [Name]," or "Hi [Name],")
+     * Clear, purposeful body text
+     * Professional sign-off:
+       Warm regards,
+       Yash
    - Do NOT duplicate the email body or subject outside the action block. Only give a polite 1-line lead-in.
-6. If the user asks for a Gmail report or email briefing:
+
+8. If the user asks for a Gmail report or email briefing:
    - Summarize the emails cleanly: Total New/Key Emails, numbered list of sender + subject + summary, and urgent action items.
-7. If the user asks to see, get, receive, or send the briefing / report / PDF (e.g., "!briefing", "Give me report", "Give me pdf", "Report bhejo"):
+9. If the user asks to see, get, receive, or send the briefing / report / PDF (e.g., "!briefing", "Give me report", "Give me pdf", "Report bhejo"):
    ALWAYS include the action block:
    [ACTION:SEND_BRIEFING_PDF]
    And a courteous lead-in confirming generation of the Daily Briefing PDF.
-8. For general queries, answer directly with high clarity and intelligence.
+10. For general queries, answer directly with high clarity, accuracy, and speed.
 `;
 
     const response = await callGeminiWithFallback(client, {
@@ -375,23 +425,23 @@ Instructions:
 }
 
 /**
- * Drafts an executive email for Director's verification
+ * Drafts an executive email for verification
  */
 export async function draftExecutiveEmail(instruction, recipientEmail, recipientName = '') {
   const client = await getGeminiClient();
   if (!client) {
     return {
-      subject: 'University Update',
+      subject: 'Update from Yash',
       body: instruction
     };
   }
 
   try {
     const prompt = `
-You are the University Director's executive assistant.
+You are the executive assistant to Yash.
 Write a polished, professional email based on this instruction: "${instruction}"
 Recipient: ${recipientName} <${recipientEmail}>
-Sign-off: Office of the Director, University
+Sign-off: Warm regards,\nYash
 
 Return strictly as JSON:
 {
@@ -413,7 +463,7 @@ Return strictly as JSON:
   } catch (error) {
     console.error('[Gemini] Draft generation error:', error.message);
     return {
-      subject: 'Message from Office of the Director',
+      subject: 'Message from Yash',
       body: instruction
     };
   }
@@ -424,52 +474,46 @@ Return strictly as JSON:
  */
 export async function synthesizeEditorialBrief({
   dateStr,
-  directorName = 'Dheemant',
+  directorName = 'Yash',
   schedules = [],
   emails = [],
-  chats = [],
-  edTechNews = []
+  chats = []
 }) {
-  const fallback = buildDefaultEditorialBrief({ dateStr, directorName, schedules, emails, chats, edTechNews });
+  const fallback = buildDefaultEditorialBrief({ dateStr, directorName, schedules, emails, chats });
   const client = await getGeminiClient();
   if (!client) return fallback;
 
   try {
     const prompt = `
-You are the Private Executive Editor and Chief of Staff to Director ${directorName}.
-Synthesize a sharp, prestigious, and accurate daily morning intelligence brief for the Director.
+You are the Private Executive Editor and Chief of Staff to Yash.
+Synthesize a sharp, prestigious, and accurate daily morning intelligence brief for Yash.
 
 CRITICAL ACCURACY REQUIREMENT:
 You must STRICTLY base your briefing on the REAL institutional data provided below.
 DO NOT invent or hallucinate fictional faculty, fake events, fake rupee amounts, fake student complaints, or fake city news.
 DO NOT invent robotic filler text like "Open focus time for strategic university administration".
-DO NOT include any outgoing emails that the Director requested to send to someone.
+DO NOT include any outgoing emails that Yash requested to send to someone.
 
 Real Inputs for ${dateStr}:
 - Scheduled Itinerary: ${JSON.stringify(schedules)}
 - Inbound Incoming Emails: ${JSON.stringify(emails.slice(0, 12))}
 - Monitored Campus WhatsApp Messages: ${JSON.stringify(chats.slice(0, 15))}
-- AI & Higher Ed Intelligence: ${JSON.stringify(edTechNews)}
 
 Return STRICTLY valid JSON with this exact schema:
 {
-  "headline": "One sharp, executive headline addressing Director ${directorName} highlighting today's most critical scheduled meeting or priority incoming email.",
+  "headline": "One sharp, executive headline addressing Yash (e.g. 'Yash, priority focus today on...') highlighting today's most critical scheduled meeting or priority incoming email.",
   "needsAttention": [
     {
-      "title": "Email Subject / Critical Topic",
-      "body": "Sender name, concise 1-2 sentence summary of what they wrote, and recommended executive action."
+      "title": "Clean Subject Line without emoji symbols or garbage",
+      "sender": "Sender Name / Email (e.g. Railway <hello@notify.railway.app>)",
+      "summary": "Crisp 1-2 sentence core message",
+      "action": "Recommended next step or executive action"
     }
   ],
   "whatsappUpdates": [
     {
-      "title": "Sender Name / Contact",
+      "title": "Sender Name / Group / Contact",
       "body": "Concise summary of their incoming message and key issue."
-    }
-  ],
-  "aiEdTech": [
-    {
-      "title": "Strategic Trend Title",
-      "body": "Actionable takeaway for university leadership and curriculum strategy."
     }
   ]
 }
@@ -495,8 +539,7 @@ Return STRICTLY valid JSON with this exact schema:
     return {
       headline: parsed.headline || fallback.headline,
       needsAttention: Array.isArray(parsed.needsAttention) && parsed.needsAttention.length > 0 ? parsed.needsAttention : fallback.needsAttention,
-      whatsappUpdates: Array.isArray(parsed.whatsappUpdates) && parsed.whatsappUpdates.length > 0 ? parsed.whatsappUpdates : fallback.whatsappUpdates,
-      aiEdTech: Array.isArray(parsed.aiEdTech) && parsed.aiEdTech.length > 0 ? parsed.aiEdTech : fallback.aiEdTech
+      whatsappUpdates: Array.isArray(parsed.whatsappUpdates) && parsed.whatsappUpdates.length > 0 ? parsed.whatsappUpdates : fallback.whatsappUpdates
     };
   } catch (err) {
     console.warn('[Gemini] Editorial brief synthesis failed, using real fallback brief:', err.message);
@@ -507,34 +550,37 @@ Return STRICTLY valid JSON with this exact schema:
 /**
  * 100% Real, Data-Driven Fallback Brief (Zero hardcoded fake people, zero filler schedule blocks)
  */
-function buildDefaultEditorialBrief({ dateStr, directorName, schedules = [], emails = [], chats = [], edTechNews = [] }) {
+function buildDefaultEditorialBrief({ dateStr, directorName = 'Yash', schedules = [], emails = [], chats = [] }) {
   // 1. Dynamic Headline based strictly on actual data
+  const name = (directorName && !directorName.toLowerCase().includes('dheemant')) ? directorName : 'Yash';
   const urgentEmails = (emails || []).filter(e => e.priority === 'Urgent');
-  let headline = `Your executive briefing and official daily schedule, ${directorName}.`;
+  let headline = `Your executive briefing and official daily schedule, ${name}.`;
   if (urgentEmails.length > 0 && urgentEmails[0].subject) {
-    headline = `${urgentEmails[0].subject.replace(/^(Re:|Fwd:)\s*/i, '')} requires your executive attention today, ${directorName}.`;
+    headline = `${urgentEmails[0].subject.replace(/^(Re:|Fwd:)\s*/i, '')} requires your executive attention today, ${name}.`;
   } else if (schedules.length > 0) {
-    headline = `${schedules[0].title} anchors your official schedule today, ${directorName}.`;
+    headline = `${schedules[0].title} anchors your official schedule today, ${name}.`;
   } else if (emails.length > 0) {
-    headline = `${emails.length} inbound communications await your review today, ${directorName}.`;
+    headline = `${emails.length} inbound communications await your review today, ${name}.`;
   }
 
-  // 2. Needs Attention - populated ONLY from real analyzed inbound emails
+  // 2. Needs Attention - populated ONLY from real analyzed inbound emails with structured format
   const attentionItems = [];
   if (emails && emails.length > 0) {
     emails.forEach(em => {
-      // Exclude emails sent by Director or self
       if (em.sender_email && em.sender_email.toLowerCase().includes('amit.dheemant')) return;
-      const title = em.subject ? em.subject.replace(/^(Re:|Fwd:)\s*/i, '') : 'Inbound Correspondence';
+      const title = em.subject ? em.subject.replace(/^(Re:|Fwd:)\s*/i, '').replace(/[^\x20-\x7E]/g, '') : 'Inbound Correspondence';
       const sender = em.sender_name || em.senderName || em.sender_email || em.senderEmail || 'Sender';
       const summary = em.summary || em.snippet || 'Review requested';
       const action = em.action_required || 'Review email thread and take necessary action.';
       attentionItems.push({
         title,
-        body: `${sender} wrote regarding: "${summary}". Suggested action: ${action}`
+        sender,
+        summary,
+        action
       });
     });
   }
+
 
   // 3. WhatsApp Communications - strictly from real incoming chats
   const whatsappItems = [];
@@ -556,17 +602,10 @@ function buildDefaultEditorialBrief({ dateStr, directorName, schedules = [], ema
     });
   }
 
-  // 4. AI & EdTech Strategic Intelligence
-  const aiEdTechItems = (edTechNews && edTechNews.length > 0) ? edTechNews.slice(0, 3).map(n => ({
-    title: n.title,
-    body: `${n.takeaway || ''}${n.source ? ` Source: ${n.source}.` : ''}`
-  })) : [];
-
   return {
     headline,
     needsAttention: attentionItems,
-    whatsappUpdates: whatsappItems,
-    aiEdTech: aiEdTechItems
+    whatsappUpdates: whatsappItems
   };
 }
 

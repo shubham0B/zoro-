@@ -3,6 +3,8 @@ storage/auth_director/
 storage/auth_bot/
 storage/briefings/*
 !storage/briefings/.gitkeep
+storage/*.db*
+*.db*
 .env
 .env.*
 !.env.example

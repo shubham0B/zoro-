@@ -32,6 +32,7 @@ import {
   disconnectDirectorSession,
   disconnectBotSession
 } from './src/whatsapp/baileysManager.js';
+import { getLocalDateStr } from './src/utils/dateUtils.js';
 
 dotenv.config();
 
@@ -718,7 +719,7 @@ app.get('/api/status', async (req, res) => {
 // 2. Dashboard Quick Stats
 app.get('/api/stats', async (req, res) => {
   try {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getLocalDateStr();
 
     const [emailStats] = await query(`SELECT COUNT(*) as total FROM email_summaries WHERE DATE(created_at) = ?`, [today]);
     const [chatStats] = await query(`SELECT COUNT(*) as total FROM whatsapp_chats WHERE DATE(created_at) = ?`, [today]);
@@ -739,7 +740,7 @@ app.get('/api/stats', async (req, res) => {
 // 3. Schedules
 app.get('/api/schedules', async (req, res) => {
   try {
-    const today = req.query.date || new Date().toISOString().split('T')[0];
+    const today = req.query.date || getLocalDateStr();
     const schedules = await getSchedulesByDate(today);
     const upcoming = await getUpcomingSchedules();
     res.json({ today: schedules, upcoming });
@@ -755,7 +756,7 @@ app.post('/api/schedules', async (req, res) => {
       return res.status(400).json({ error: 'time_slot and title are required' });
     }
     const id = await addSchedule({
-      date: date || new Date().toISOString().split('T')[0],
+      date: date || getLocalDateStr(),
       time_slot,
       title,
       description,
