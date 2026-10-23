@@ -1,8 +1,8 @@
 {
-  "name": "whatspp-automation",
+  "name": "zoro",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Zoro AI - Autonomous Omnichannel Co-Pilot & Command Hub",
+  "main": "server.js",
   "type": "module",
   "scripts": {
     "start": "node server.js"

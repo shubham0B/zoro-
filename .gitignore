@@ -1,8 +1,11 @@
 node_modules/
 storage/auth_director/
 storage/auth_bot/
-storage/briefings/*.pdf
+storage/briefings/*
+!storage/briefings/.gitkeep
 .env
+.env.*
+!.env.example
 .DS_Store
 *.log
 npm-debug.log*

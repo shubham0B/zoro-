@@ -432,29 +432,55 @@ async function handleBotIncomingMessage(jid, senderPhone, text) {
     const isDirector = matchPhone(cleanSender, cleanDir);
     const isPA = matchPhone(cleanSender, cleanPa);
 
-    console.log(`[Bot WhatsApp] Inbound text from "${senderPhone}" (clean: ${cleanSender}) to bot. Match check -> isDirector: ${isDirector} (target: ${cleanDir || 'NONE'}), isPA: ${isPA} (target: ${cleanPa || 'NONE'})`);
+    const accessMode = (await getSetting('ACCESS_MODE')) || process.env.ACCESS_MODE || 'universal';
+    const isUniversalMode = accessMode === 'universal';
+    const isOwner = isDirector;
 
-    // --- STRICT ACCESS CONTROL / SECURITY FIREWALL ---
-    // If the sender is NEITHER Director NOR PA, SILENTLY DROP THE MESSAGE!
-    // Never reply with access notices, texts, or files to unauthorized persons.
-    if (!isDirector && !isPA) {
+    console.log(`[Bot WhatsApp] Inbound text from "${senderPhone}" (clean: ${cleanSender}) to bot. Match check -> isDirector: ${isDirector} (target: ${cleanDir || 'NONE'}), isPA: ${isPA} (target: ${cleanPa || 'NONE'}), accessMode: ${accessMode}`);
+
+    // --- ACCESS CONTROL / SECURITY FIREWALL ---
+    // If sender is NEITHER Director NOR PA and we are NOT in Universal/Hackathon Mode, SILENTLY DROP!
+    if (!isUniversalMode && !isDirector && !isPA) {
       console.warn(`[Bot Security] Silently dropped text from unauthorized number: ${senderPhone}. Authorized Dir: "${cleanDir ? cleanDir.slice(-4) : 'NONE'}", PA: "${cleanPa ? cleanPa.slice(-4) : 'NONE'}"`);
-      await logActivity('SECURITY', `Silently ignored inbound text from unauthorized number ${senderPhone}`, 'WARN');
-      return; // SILENT DROP - DO NOT SEND ANY MESSAGE
+      await logActivity('SECURITY', `Silently ignored inbound text from unauthorized number ${senderPhone} (Whitelist mode active)`, 'WARN');
+      return; // SILENT DROP
     }
 
-    // --- PA Commands & Natural AI Schedule Handling ---
+    // --- Universal / Hackathon Demo Mode: Friendly Onboarding & Feature Menu ---
+    const lowerTrimText = text.toLowerCase().trim();
+    const isGreeting = /^(hi|hello|hey|start|menu|help|info|about|who are you|namaste|hii|helo)$/i.test(lowerTrimText);
+
+    if (!isDirector && !isPA && isGreeting) {
+      const assistantName = (await getSetting('ASSISTANT_NAME')) || 'Zoro AI';
+      const welcomeCard = `⚔️ *Greetings! I am ${assistantName}*
+_Your Universal Autonomous Omnichannel Co-Pilot_ 🚀
+
+🌟 *Live Hackathon Interactive Demo:*
+I am an autonomous multi-agent co-pilot bridging WhatsApp, Gmail, Intelligent Scheduling, and Gemini AI.
+
+💡 *Try testing any of these features right now:*
+1️⃣ *!briefing* — Generates an Executive Daily Intelligence PDF report on the fly and sends it directly to you!
+2️⃣ *Schedule a meeting:* Text _"Meeting with judges tomorrow at 11 AM at Booth A"_
+3️⃣ *Check schedule:* Text _"What's on my schedule today?"_
+4️⃣ *Draft an email:* Text _"Draft an email to mentor@hackathon.com requesting 5-min review"_
+5️⃣ *Ask anything:* Ask any strategic question, brainstorm ideas, or craft messages!`;
+
+      await botSock.sendMessage(jid, { text: welcomeCard });
+      return;
+    }
+
+    // --- PA / Team Commands & Natural AI Schedule Handling ---
     if (isPA && !isDirector) {
-      // 1. Check legacy prefix if PA typed "!schedule"
+      // 1. Check legacy prefix if typed "!schedule"
       if (text.startsWith('!schedule')) {
         const added = await parseScheduleFromText(text);
         await botSock.sendMessage(jid, {
-          text: `✅ *Schedule Updated by PA:*\nAdded ${added.length} meeting(s) to Director's calendar for today.`
+          text: `✅ *Schedule Updated:*\nAdded ${added.length} meeting(s) to master calendar for today.`
         });
         return;
       }
 
-      // 2. Intelligent AI Parsing for Natural PA messages (e.g. "Thoolle meeting tomorrow at 7 pm")
+      // 2. Intelligent AI Parsing for Natural messages
       const parsedIntent = await parseScheduleIntentWithAI(text);
       if (parsedIntent) {
         if (parsedIntent.intent === 'ADD_MEETING' && parsedIntent.meeting) {
@@ -464,13 +490,13 @@ async function handleBotIncomingMessage(jid, senderPhone, text) {
             time_slot: m.time_slot || 'TBD',
             title: m.title || 'Scheduled Discussion',
             description: m.description || '',
-            location: m.location || "Director's Office",
+            location: m.location || "Workspace",
             priority: m.priority || 'Normal',
-            created_by: 'PA via WhatsApp'
+            created_by: 'Collaborator via WhatsApp'
           });
 
           await botSock.sendMessage(jid, {
-            text: `✅ *Meeting Scheduled in Director's Calendar!*\n\n📅 *Date:* ${m.date}\n⏰ *Time:* ${m.time_slot}\n📌 *Agenda:* ${m.title}\n${m.description ? `📝 *Notes:* ${m.description}\n` : ''}⚠️ *Priority:* ${m.priority || 'Normal'}\n📍 *Location:* ${m.location || "Director's Office"}\n\n_Director's itinerary has been successfully updated!_`
+            text: `✅ *Meeting Scheduled in Master Calendar!*\n\n📅 *Date:* ${m.date}\n⏰ *Time:* ${m.time_slot}\n📌 *Agenda:* ${m.title}\n${m.description ? `📝 *Notes:* ${m.description}\n` : ''}⚠️ *Priority:* ${m.priority || 'Normal'}\n📍 *Location:* ${m.location || "Workspace"}\n\n_Master itinerary has been successfully updated!_`
           });
           return;
         }
@@ -483,7 +509,7 @@ async function handleBotIncomingMessage(jid, senderPhone, text) {
             : `No meetings scheduled for ${targetDate}.`;
 
           await botSock.sendMessage(jid, {
-            text: `📅 *Director's Schedule (${targetDate}):*\n\n${list}\n\n_To add a meeting, simply text details naturally (e.g., "Meeting tomorrow at 7 PM with Thoolle")_`
+            text: `📅 *Schedule (${targetDate}):*\n\n${list}\n\n_To add a meeting, simply text details naturally (e.g., "Meeting tomorrow at 7 PM with Team")_`
           });
           return;
         }
@@ -618,13 +644,13 @@ async function handleBotIncomingMessage(jid, senderPhone, text) {
         try {
           await directorSock.sendMessage(formattedJid, { text: pendingMessage });
           await botSock.sendMessage(jid, {
-            text: `✅ ${contactName ? `*Contact "${contactName}" linked to ${phoneDigits}!*\n\n` : ''}*Message sent to ${phoneDigits} from your Director WhatsApp account:*\n"${pendingMessage}"`
+            text: `✅ ${contactName ? `*Contact "${contactName}" linked to ${phoneDigits}!*\n\n` : ''}*Message sent to ${phoneDigits} from your personal WhatsApp:*\n"${pendingMessage}"`
           });
           directorConversationHistory.push({ role: 'user', content: text });
           directorConversationHistory.push({ role: 'assistant', content: `Message sent to ${phoneDigits}: "${pendingMessage}"` });
           return;
         } catch (sendErr) {
-          console.error('[Director WA Send Error]:', sendErr);
+          console.error('[Personal WA Send Error]:', sendErr);
           await botSock.sendMessage(jid, {
             text: `❌ Error sending message to ${phoneDigits}: ${sendErr.message}`
           });
@@ -632,7 +658,7 @@ async function handleBotIncomingMessage(jid, senderPhone, text) {
         }
       } else {
         await botSock.sendMessage(jid, {
-          text: `✅ *Noted!* ${contactName ? `Contact "${contactName}"` : 'Phone number'} saved as *${phoneDigits}*.\n\nWhat message would you like me to send them from your Director WhatsApp?`
+          text: `✅ *Noted!* ${contactName ? `Contact "${contactName}"` : 'Phone number'} saved as *${phoneDigits}*.\n\nWhat message would you like me to send them from your personal WhatsApp?`
         });
         directorConversationHistory.push({ role: 'user', content: text });
         directorConversationHistory.push({ role: 'assistant', content: `Saved phone number ${phoneDigits} for ${contactName || 'contact'}.` });
@@ -677,21 +703,21 @@ async function handleBotIncomingMessage(jid, senderPhone, text) {
           await directorSock.sendMessage(targetJid, { text: messageToSend });
           const displayTarget = targetRecipient.includes('@') ? targetRecipient.split('@')[0] : targetRecipient;
           await botSock.sendMessage(jid, {
-            text: `✅ *Message sent to ${displayTarget} from your Director WhatsApp account:*\n"${messageToSend}"`
+            text: `✅ *Message sent to ${displayTarget} from your personal WhatsApp:*\n"${messageToSend}"`
           });
           directorConversationHistory.push({ role: 'user', content: text });
           directorConversationHistory.push({ role: 'assistant', content: `Message sent to ${displayTarget}: "${messageToSend}"` });
           return;
         } catch (sendErr) {
-          console.error('[Director WA Send Error]:', sendErr);
+          console.error('[Personal WA Send Error]:', sendErr);
           await botSock.sendMessage(jid, {
-            text: `❌ Failed to deliver message from Director WhatsApp to ${targetRecipient}: ${sendErr.message}`
+            text: `❌ Failed to deliver message from personal WhatsApp to ${targetRecipient}: ${sendErr.message}`
           });
           return;
         }
       } else if (!directorSock) {
         await botSock.sendMessage(jid, {
-          text: `⚠️ *Director WhatsApp account is currently disconnected.* Please scan/connect Director WhatsApp in the dashboard before sending messages.`
+          text: `⚠️ *Personal WhatsApp account is currently disconnected.* Please scan/connect personal WhatsApp in the dashboard before sending messages.`
         });
         return;
       } else {
@@ -984,6 +1010,15 @@ async function handleBotIncomingMessage(jid, senderPhone, text) {
     if (replyMatch) {
       const targetRecipient = replyMatch[1].trim();
       const messageToSend = replyMatch[2].trim();
+      const cleanReply = aiReply.replace(replyMatch[0], '').trim();
+      const displayTarget = targetRecipient.includes('@') ? targetRecipient.split('@')[0] : targetRecipient;
+
+      if (!isDirector) {
+        await botSock.sendMessage(jid, {
+          text: `${cleanReply ? `${cleanReply}\n\n` : ''}💬 *Crafted Message Ready for ${displayTarget}:*\n"${messageToSend}"\n\n_💡 (Direct proxy delivery via linked session is reserved for primary account owner)_`
+        });
+        return;
+      }
 
       // Resolve recipient JID: Direct Phone Number > Cache > Database > Conversation History
       const targetJid = await resolveRecipientJid(targetRecipient);
@@ -991,22 +1026,20 @@ async function handleBotIncomingMessage(jid, senderPhone, text) {
       if (targetJid && directorSock) {
         try {
           await directorSock.sendMessage(targetJid, { text: messageToSend });
-          const cleanReply = aiReply.replace(replyMatch[0], '').trim();
-          const displayTarget = targetRecipient.includes('@') ? targetRecipient.split('@')[0] : targetRecipient;
           await botSock.sendMessage(jid, {
-            text: `${cleanReply ? `${cleanReply}\n\n` : ''}✅ *Message sent to ${displayTarget} from your Director WhatsApp account:*\n"${messageToSend}"`
+            text: `${cleanReply ? `${cleanReply}\n\n` : ''}✅ *Message sent to ${displayTarget} from your primary WhatsApp account:*\n"${messageToSend}"`
           });
           return;
         } catch (sendErr) {
-          console.error('[Director WA Send Error]:', sendErr);
+          console.error('[Primary WA Send Error]:', sendErr);
           await botSock.sendMessage(jid, {
-            text: `❌ Failed to deliver message from Director WhatsApp to ${targetRecipient}: ${sendErr.message}`
+            text: `❌ Failed to deliver message from WhatsApp to ${targetRecipient}: ${sendErr.message}`
           });
           return;
         }
       } else if (!directorSock) {
         await botSock.sendMessage(jid, {
-          text: `⚠️ *Director WhatsApp account is currently disconnected.* Please scan/connect Director WhatsApp in the dashboard before sending messages.`
+          text: `⚠️ *Primary WhatsApp account is currently disconnected.* Please scan/connect primary WhatsApp in the dashboard before proxying messages.`
         });
         return;
       } else {
@@ -1077,14 +1110,21 @@ async function handleBotIncomingMessage(jid, senderPhone, text) {
     }
 
     // Regular AI response
-    await botSock.sendMessage(jid, { text: aiReply });
+    const replyText = (typeof aiReply === 'string' && aiReply.trim()) 
+      ? aiReply.trim() 
+      : "I received your request! The Zoro reasoning engine is syncing. Please text again if you need immediate details.";
+    if (botSock && botStatus === 'CONNECTED') {
+      await botSock.sendMessage(jid, { text: replyText });
+    }
   } catch (err) {
     console.error('[Bot Error]:', err);
     await logActivity('BOT_ERROR', `Error processing query from ${senderPhone}: ${err.message}`, 'ERROR');
     try {
-      await botSock.sendMessage(jid, {
-        text: `⚠️ *Executive Assistant Alert*\n\nI encountered an error processing your query: ${err.message}`
-      });
+      if (botSock && botStatus === 'CONNECTED') {
+        await botSock.sendMessage(jid, {
+          text: `⚠️ *Zoro AI Notice*\n\nI encountered a momentary delay: ${err.message}. Please try texting again in a moment.`
+        });
+      }
     } catch (e) {}
   }
 }
@@ -1209,19 +1249,23 @@ export async function triggerDailyBriefing(targetJid = null) {
         `🎓 *Top EdTech News:* ${edTechNews[0]?.title || 'AI Integration in Higher Ed'}\n\n` +
         `📎 *Attached:* High-Resolution Executive PDF Report below.`;
 
-      await activeSock.sendMessage(recipientJid, { text: textDigest });
+      try {
+        await activeSock.sendMessage(recipientJid, { text: textDigest });
 
-      // Send PDF file
-      const pdfBuffer = fs.readFileSync(pdfPath);
-      await activeSock.sendMessage(recipientJid, {
-        document: pdfBuffer,
-        mimetype: 'application/pdf',
-        fileName: `Executive_Briefing_${todayStr}.pdf`,
-        caption: `Executive Daily Intelligence Briefing - ${todayStr}`
-      });
+        // Send PDF file
+        const pdfBuffer = fs.readFileSync(pdfPath);
+        await activeSock.sendMessage(recipientJid, {
+          document: pdfBuffer,
+          mimetype: 'application/pdf',
+          fileName: `Zoro_Briefing_${todayStr}.pdf`,
+          caption: `Zoro Daily Intelligence Briefing - ${todayStr}`
+        });
 
-      dispatched = true;
-      await logActivity('BRIEFING', `Daily briefing PDF dispatched to Director (${recipientJid}) via ${botSock ? 'Bot' : 'Director'} WhatsApp`, 'INFO');
+        dispatched = true;
+        await logActivity('BRIEFING', `Daily briefing PDF dispatched to (${recipientJid}) via WhatsApp`, 'INFO');
+      } catch (dispatchErr) {
+        console.warn('[Briefing Dispatch Error]:', dispatchErr.message);
+      }
     } else {
       console.log(`[Briefing] PDF generated at ${pdfPath}. WhatsApp dispatch skipped (recipientJid: ${recipientJid}, botSock: ${!!botSock}, directorSock: ${!!directorSock}).`);
     }

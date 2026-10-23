@@ -685,7 +685,7 @@ app.post('/api/test/whatsapp-ping', async (req, res) => {
     const paPhone = (await getSetting('PA_PHONE')) || process.env.PA_PHONE;
     
     const phone = target === 'pa' ? paPhone : dirPhone;
-    if (!phone) return res.status(400).json({ success: false, error: `${target === 'pa' ? 'PA' : 'Director'} phone number is not configured in Settings.` });
+    if (!phone) return res.status(400).json({ success: false, error: `${target === 'pa' ? 'Collaborator' : 'Primary'} phone number is not configured in Settings.` });
 
     await sendTestPing(phone);
     res.json({ success: true, message: `Test WhatsApp ping dispatched to ${phone}` });
@@ -1062,12 +1062,25 @@ app.get('/api/settings', async (req, res) => {
       'PA_PHONE',
       'ORGANIZATION_NAME',
       'DIRECTOR_TITLE',
-      'BRIEFING_TIME'
+      'BRIEFING_TIME',
+      'ACCESS_MODE',
+      'USER_PERSONA',
+      'USER_NAME',
+      'ASSISTANT_NAME'
     ];
+
+    const defaults = {
+      ACCESS_MODE: 'universal',
+      USER_PERSONA: 'universal',
+      USER_NAME: 'Leader',
+      ASSISTANT_NAME: 'Zoro AI',
+      ORGANIZATION_NAME: 'Zoro AI Hub',
+      DIRECTOR_TITLE: 'Zoro Co-Pilot'
+    };
 
     const settings = {};
     for (const k of keys) {
-      settings[k] = (await getSetting(k)) || process.env[k] || '';
+      settings[k] = (await getSetting(k)) || process.env[k] || defaults[k] || '';
     }
 
     // Mask sensitive keys for security in UI
@@ -1096,7 +1109,11 @@ app.post('/api/settings', async (req, res) => {
       'PA_PHONE',
       'ORGANIZATION_NAME',
       'DIRECTOR_TITLE',
-      'BRIEFING_TIME'
+      'BRIEFING_TIME',
+      'ACCESS_MODE',
+      'USER_PERSONA',
+      'USER_NAME',
+      'ASSISTANT_NAME'
     ];
 
     for (const key of allowed) {
@@ -1185,9 +1202,9 @@ async function bootstrap() {
   await initDatabase();
 
   // 2. Start Dual Baileys WhatsApp Sessions
-  console.log('[WhatsApp] Initializing Director & Bot WhatsApp instances...');
-  startDirectorSession().catch(err => console.error('[Director WA Error]:', err.message));
-  startBotSession().catch(err => console.error('[Bot WA Error]:', err.message));
+  console.log('[WhatsApp] Initializing Personal & Zoro WhatsApp instances...');
+  startDirectorSession().catch(err => console.error('[Personal WA Error]:', err.message));
+  startBotSession().catch(err => console.error('[Zoro WA Error]:', err.message));
 
   // 3. Start Recruitment Resume Email Poller Engine
   try {

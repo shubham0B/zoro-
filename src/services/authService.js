@@ -1,9 +1,9 @@
 import crypto from 'crypto';
 import { query, logActivity } from '../database/db.js';
 
-const DEFAULT_ADMIN_EMAIL = 'amit.dheemant@jecrcu.edu.in';
-const DEFAULT_ADMIN_PASSWORD = 'dheemant@password2012';
-const DEFAULT_ADMIN_NAME = 'Director Amit Dheemant';
+const DEFAULT_ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@zoro.ai';
+const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin@2026';
+const DEFAULT_ADMIN_NAME = process.env.ADMIN_NAME || 'Zoro Admin';
 
 /**
  * Hash a password using scrypt with a unique salt
@@ -34,9 +34,9 @@ export function verifyPassword(password, storedHash, salt) {
   }
 }
 
-const DEFAULT_RECRUITER_EMAIL = 'deepak.talkudar@jecrcu.edu.in';
+const DEFAULT_RECRUITER_EMAIL = 'recruiter@zoro.ai';
 const DEFAULT_RECRUITER_PASSWORD = 'Deepak@2026';
-const DEFAULT_RECRUITER_NAME = 'Deepak Talkudar';
+const DEFAULT_RECRUITER_NAME = 'Recruiter Admin';
 
 /**
  * Seed default admin credentials if admin_users is empty or users are missing
@@ -46,16 +46,21 @@ export async function seedDefaultAdmin() {
     const users = await query('SELECT id, email, role FROM admin_users LIMIT 20');
     const existingEmails = new Set(users.map(u => u.email.toLowerCase()));
 
-    // 1. Seed Director if missing
+    // 1. Seed / Update Admin account
+    const { hash, salt } = hashPassword(DEFAULT_ADMIN_PASSWORD);
     if (!existingEmails.has(DEFAULT_ADMIN_EMAIL.toLowerCase())) {
-      const { hash, salt } = hashPassword(DEFAULT_ADMIN_PASSWORD);
       await query(
         `INSERT INTO admin_users (email, name, password_hash, salt, role) 
          VALUES (?, ?, ?, ?, 'director')
          ON DUPLICATE KEY UPDATE updated_at = NOW()`,
         [DEFAULT_ADMIN_EMAIL.toLowerCase(), DEFAULT_ADMIN_NAME, hash, salt]
       );
-      console.log(`[Auth] Default director account initialized for: ${DEFAULT_ADMIN_EMAIL}`);
+      console.log(`[Auth] Default admin account initialized for: ${DEFAULT_ADMIN_EMAIL}`);
+    } else {
+      await query(
+        `UPDATE admin_users SET password_hash = ?, salt = ?, name = ? WHERE LOWER(email) = ?`,
+        [hash, salt, DEFAULT_ADMIN_NAME, DEFAULT_ADMIN_EMAIL.toLowerCase()]
+      );
     }
 
     // 2. Seed Deepak Talkudar (Recruiter Admin) if missing
@@ -108,7 +113,7 @@ export async function loginUser(email, password, userAgent = '', ipAddress = '')
     [token, user.id, user.email, expiresAt, (userAgent || '').substring(0, 250), (ipAddress || '').substring(0, 60)]
   );
 
-  await logActivity('AUTH', `Director logged in: ${user.email}`, 'INFO', { ip: ipAddress });
+  await logActivity('AUTH', `Admin logged in: ${user.email}`, 'INFO', { ip: ipAddress });
 
   return {
     success: true,

@@ -7,7 +7,7 @@ let aiClient = null;
 
 export async function getGeminiModel() {
   const dbModel = await getSetting('GEMINI_MODEL');
-  const chosenModel = dbModel || process.env.GEMINI_MODEL || 'gemini-3.7-flash';
+  const chosenModel = dbModel || process.env.GEMINI_MODEL || 'gemini-3.5-flash';
   return chosenModel;
 }
 
@@ -30,21 +30,25 @@ export async function getGeminiClient() {
  * Robust wrapper that calls Gemini with automatic fallback models on 503 or overload spikes
  */
 export async function callGeminiWithFallback(client, options) {
-  const primaryModel = (await getGeminiModel()) || 'gemini-3.7-flash';
-  const candidates = [primaryModel, 'gemini-flash-latest', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-2.5-flash-lite'];
+  const primaryModel = (await getGeminiModel()) || 'gemini-3.5-flash';
+  const candidates = [primaryModel, 'gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.7-flash'];
   const models = [...new Set(candidates)];
   let lastErr = null;
 
   for (const m of models) {
-    try {
-      const res = await client.models.generateContent({
-        ...options,
-        model: m
-      });
-      return res;
-    } catch (err) {
-      console.warn(`[Gemini] Model ${m} spike/error: ${err.message.slice(0, 90)}. Trying fallback...`);
-      lastErr = err;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res = await client.models.generateContent({
+          ...options,
+          model: m
+        });
+        return res;
+      } catch (err) {
+        lastErr = err;
+        if (attempt === 0) {
+          await new Promise(r => setTimeout(r, 600));
+        }
+      }
     }
   }
   throw lastErr;
@@ -191,25 +195,28 @@ Return strictly as JSON with this structure:
 }
 
 /**
- * Fetches top 3-4 trending EdTech & Higher Education AI developments
+ * Fetches top 3-4 trending AI, Technology, Startup & Productivity developments
  */
 export async function getEdTechAndAiNews() {
   const client = await getGeminiClient();
+  const persona = (await getSetting('USER_PERSONA')) || 'universal';
+  const orgName = (await getSetting('ORGANIZATION_NAME')) || 'Innovation Hub';
+
   const defaultNews = [
     {
-      title: "Agentic AI in Higher Education Curricula",
-      source: "EdTech Global & NEP 2020 Insights",
-      takeaway: "Top universities integrating autonomous AI workflows into engineering and management pedagogy for industry alignment."
+      title: "Autonomous Agentic AI in Modern Workflows & Decision Systems",
+      source: "MIT Tech Review & ArXiv",
+      takeaway: "Multi-agent systems with tool use and safety loops transforming software, operations, and communications."
     },
     {
-      title: "UGC / AICTE Framework on Generative AI & Academic Integrity",
-      source: "Regulatory Updates",
-      takeaway: "New institutional guidelines on ethical AI adoption, intellectual property, and research publication compliance."
+      title: "Real-time Multimodal LLMs Bridge Edge and Omnichannel Platforms",
+      source: "AI Research Digest",
+      takeaway: "Sub-second inference and audio/text agents enabling hands-free assistants on mobile and chat apps."
     },
     {
-      title: "Campus-Wide Personalized Learning via LLM Tutors",
-      source: "Higher Education Tech Review",
-      takeaway: "Institutions reporting 25% improvement in foundational STEM courses through adaptive 24/7 AI teaching assistants."
+      title: "Global Tech & Startup Ecosystem: Rise of Sovereign AI Micro-Hubs",
+      source: "VentureBeat & TechCrunch",
+      takeaway: "Specialized, local context-grounded AI tools outperforming generic models in enterprise productivity."
     }
   ];
 
@@ -217,19 +224,19 @@ export async function getEdTechAndAiNews() {
 
   try {
     const prompt = `
-You are the Chief AI Strategic Advisor to a University Director.
-Provide exactly 3 to 4 top-notch, highly relevant, and actionable EdTech & Artificial Intelligence news/trends that a University Director MUST know today.
+You are the Strategic AI Advisor to a modern leader and innovator (${orgName}, Persona: ${persona}).
+Provide exactly 3 to 4 top-notch, highly relevant, and actionable Artificial Intelligence, Tech, and Innovation breakthroughs that they MUST know today.
 Focus on:
-1. Higher Education AI implementation & research funding.
-2. NEP / UGC / AICTE policy advancements or global academic tech breakthroughs.
-3. Student placement and industry-academia AI partnerships.
+1. Agentic AI, developer breakthroughs, and automation trends.
+2. High-impact tech news, startup innovations, and industry shifts.
+3. Strategic productivity and future-of-work advancements.
 
 Format strictly as a JSON array:
 [
   {
     "title": "Concise Headline",
     "source": "Credible Domain / Publication",
-    "takeaway": "1-2 sentences on why this matters strategically to the Director and the university."
+    "takeaway": "1-2 sentences on why this matters strategically."
   }
 ]
 `;
@@ -245,7 +252,7 @@ Format strictly as a JSON array:
     const cleanText = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
     return JSON.parse(cleanText);
   } catch (error) {
-    console.error('[Gemini] EdTech news generation error:', error.message);
+    console.error('[Gemini] Tech news generation error:', error.message);
     return defaultNews;
   }
 }
@@ -259,72 +266,69 @@ export async function handleDirectorChat(query, context = {}) {
     return "Gemini API key is not configured yet. Please configure it in the Web Dashboard Settings.";
   }
 
+  const assistantName = (await getSetting('ASSISTANT_NAME')) || 'Zoro AI';
+  const userName = (await getSetting('USER_NAME')) || (await getSetting('DIRECTOR_NAME')) || 'Leader';
+  const orgName = (await getSetting('ORGANIZATION_NAME')) || 'Zoro AI Hub';
+  const persona = (await getSetting('USER_PERSONA')) || 'universal';
+
   try {
     const prompt = `
-You are the AI Executive Chief of Staff to the University Director.
-You communicate respectfully, crisply, and efficiently (English or professional Hinglish matching Director's tone).
+You are ${assistantName}, the Universal Autonomous Co-Pilot and Intelligent Companion for ${userName} (${orgName}).
+Persona setting: ${persona} (adaptive mode).
+You communicate crisply, proactively, respectfully, and efficiently (in English or modern conversational Hinglish matching the user's tone).
 
 Current Context Available:
 - Today's Date: ${new Date().toISOString().split('T')[0]}
 - Tomorrow's Date: ${new Date(Date.now() + 86400000).toISOString().split('T')[0]}
 - Scheduled Meetings (Today & Upcoming): ${JSON.stringify(context.schedules || [])}
-- Recent WhatsApp Messages from Director's phone: ${JSON.stringify(context.whatsappMessages || [])}
+- Recent WhatsApp Messages from primary phone: ${JSON.stringify(context.whatsappMessages || [])}
 - Recent Important Emails: ${JSON.stringify(context.recentEmails || [])}
 - Emails Found via Live Gmail Search (Read & Unread): ${JSON.stringify(context.matchedEmails || [])}
 - Pending Email Drafts: ${JSON.stringify(context.pendingDrafts || [])}
-- Recent Chat Conversation History with Director: ${JSON.stringify(context.conversationHistory || [])}
+- Recent Chat Conversation History with User: ${JSON.stringify(context.conversationHistory || [])}
 - WhatsApp Historical Messages Matching Query: ${JSON.stringify(context.matchedWhatsAppMessages || [])}
 
-Director's Message / Query: "${query}"
+User's Message / Query: "${query}"
 
 Instructions:
-1. If the Director asks to find or check emails regarding a person, email address, or topic (e.g. "Dheemant", "Amitdheemant@jecrcu.edu.in", "IIT Bombay", "Techfest"):
+1. If the user asks to find or check emails regarding a person, email address, or topic:
    - First check "Emails Found via Live Gmail Search" and "Recent Important Emails".
-   - If any emails are present (even if marked read in Gmail), present them immediately: Sender Name/Email, Subject, Date, and Key Snippet/Summary.
-   - If no personal emails are found in their inbox, state that clearly, and if applicable provide official public directory contact details.
+   - If any emails are present, present them immediately: Sender Name/Email, Subject, Date, and Key Snippet/Summary.
+   - If no personal emails are found in their inbox, state that clearly and concisely.
 2. If asking about schedule/meetings (e.g. "Is tomorrow I have meeting", "What are my meetings today?"):
    - Compare the query date against "Today's Date" and "Tomorrow's Date".
    - Check "Scheduled Meetings (Today & Upcoming)" for matching dates.
-   - If a meeting exists for tomorrow (e.g. "Meeting with Yuvraj"), tell the Director immediately with time, agenda, and details!
-3. If the Director asks about old/past WhatsApp messages, or what someone texted on WhatsApp (e.g., 'Can you read old chats?', 'Tarun ne kya text kiya?', 'Check WhatsApp messages from Yuvraj'):
+   - Present scheduled meetings with time, agenda, and location!
+3. If the user asks about past WhatsApp messages or what someone texted:
    - Check 'WhatsApp Historical Messages Matching Query' and 'Recent WhatsApp Messages'.
-   - If past messages exist, summarize them factually with sender, date/time, and content.
-   - If no messages are found for that person in database, answer: 'Sir, our local WhatsApp history database currently has no saved messages from [Name]. When Director WhatsApp is linked, recent past messages synced by WhatsApp are archived here for instant lookup.'
+   - Summarize factually with sender, date/time, and content.
 4. ADVANCED WHATSAPP INTENT UNDERSTANDING & MESSAGE CRAFTING:
-   When the Director asks to text, message, ping, or tell someone on WhatsApp (in English, Hindi, Hinglish, informal dictation, or raw phrases):
+   When the user asks to text, message, ping, or tell someone on WhatsApp:
    a) Recipient Resolution:
-      - Understand who the message is intended for. Check the query AND "Recent Chat Conversation History with Director".
+      - Understand who the message is intended for. Check the query AND "Recent Chat Conversation History".
       - If a phone number is provided (e.g. 9309313044, +919309313044), use that phone number directly as TO.
-      - If the Director refers to a person by name or pronoun ("yuvraj", "him", "them", "is number pe", "unko") and previously mentioned their number, resolve to that person/number!
-      - NEVER claim a phone number is invalid or cannot be found! The backend system dispatches directly to any valid mobile number.
+      - If the user refers to a person by name or pronoun and previously mentioned their number, resolve to that person/number!
    b) Intelligent Message Understanding & Enhancement:
-      - Direct Quotes: If the Director specifies exact words in quotes (e.g. 'kaha hai kutte') or explicit casual text, preserve the Director's direct wording.
-      - Natural Intent / Dictation: If the Director gives an instruction (e.g. "Tell Yuvraj to bring the syllabus by 10 AM", "Kashish ko bolo form check kar le"), understand the intent and craft a crisp, respectful, professional WhatsApp message from the Director.
-      - Raw Hinglish / Conversational: Intelligently extract the intended message.
+      - Direct Quotes: If user specifies exact words in quotes or explicit text, preserve the exact wording.
+      - Natural Intent / Dictation: If user gives an instruction (e.g. "Tell Alex to bring the slides by 10 AM"), craft a crisp, respectful WhatsApp message.
    c) Action Output:
       ALWAYS format the action block:
       [ACTION:WHATSAPP_REPLY | TO:recipient_phone_or_name | MESSAGE:message_content]
-      Accompany with a courteous 1-line lead-in confirming the dispatch.
-      Example: [ACTION:WHATSAPP_REPLY | TO:9309313044 | MESSAGE:kaha hai kutte]
-5. If the Director wants to send an email (e.g. "Tarun ko email bhej do...", "Send email to..."):
+      Accompany with a courteous 1-line lead-in confirming the action.
+      Example: [ACTION:WHATSAPP_REPLY | TO:9309313044 | MESSAGE:Meeting confirmed for 4 PM]
+5. If the user wants to send or draft an email:
    NEVER say the email is already sent! Prepare the draft and output:
    [ACTION:DRAFT_EMAIL | TO:recipient_email | SUBJECT:subject_line | BODY:body_content]
    CRITICAL FOR EMAIL DRAFT:
-   - For BODY, use clean natural paragraphs with real line breaks. Do NOT write literal "\n" or escaped slashes.
-   - Do NOT duplicate the email body or subject outside the action block. Only give a polite 1-line lead-in like:
-     "Sir, I have prepared the email draft for your review:"
-6. If the Director asks for a Gmail report or email briefing (e.g., "give me the gmail today report", "today email report", "gmail report", "check emails", "unread emails"):
-   - CRITICAL DATA SEPARATION: Recruitment and candidate applications are handled in a separate system. NEVER mention or merge recruiter team emails, candidate applications, resumes, or hospital recruitment data here.
-   - Present ONLY genuine executive/university emails belonging to the Director's connected email.
-   - Summarize the emails cleanly:
-     * 📧 *Total New/Key Emails*
-     * Numbered list with: *Sender*, *Subject*, *Time/Date*, and a 1-line *Key Summary*
-     * Any *Urgent Action Items* required from the Director.
-7. If the Director asks to see, get, receive, or send the executive report / briefing / PDF (e.g., "Give me the report", "Give me pdf", "Give me here", "Send the PDF here", "Report bhejo", "PDF document do"):
+   - For BODY, use clean natural paragraphs with real line breaks. Do NOT write literal "\\n".
+   - Do NOT duplicate the email body or subject outside the action block. Only give a polite 1-line lead-in.
+6. If the user asks for a Gmail report or email briefing:
+   - Summarize the emails cleanly: Total New/Key Emails, numbered list of sender + subject + summary, and urgent action items.
+7. If the user asks to see, get, receive, or send the briefing / report / PDF (e.g., "!briefing", "Give me report", "Give me pdf", "Report bhejo"):
    ALWAYS include the action block:
    [ACTION:SEND_BRIEFING_PDF]
-   And a courteous lead-in: "Sir, I am generating your real-time Executive Daily Briefing PDF and sending the document directly here on WhatsApp right now."
-8. For general queries, answer directly with executive clarity.
+   And a courteous lead-in confirming generation of the Daily Briefing PDF.
+8. For general queries, answer directly with high clarity and intelligence.
 `;
 
     const response = await callGeminiWithFallback(client, {

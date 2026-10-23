@@ -129,12 +129,12 @@ async function initAuthSession() {
 
       // Do NOT display raw full email in header
       if (emailElem) {
-        emailElem.textContent = u.name || 'Director Office';
-        emailElem.title = u.email || 'amit.dheemant@jecrcu.edu.in';
+        emailElem.textContent = u.name || 'Zoro Admin';
+        emailElem.title = u.email || 'admin@zoro.ai';
       }
-      if (settingsEmail) settingsEmail.textContent = u.email || 'amit.dheemant@jecrcu.edu.in';
+      if (settingsEmail) settingsEmail.textContent = u.email || 'admin@zoro.ai';
       if (avatarElem) {
-        const parts = (u.name || 'Amit Dheemant').split(' ').filter(Boolean);
+        const parts = (u.name || 'Zoro Admin').split(' ').filter(Boolean);
         const initials = parts.length > 1 ? (parts[0][0] + parts[parts.length - 1][0]) : parts[0].substring(0, 2);
         avatarElem.textContent = initials.toUpperCase();
       }
@@ -297,7 +297,7 @@ function updateWhatsAppUI(waData) {
         </div>`;
     } else if (status === 'SCAN_QR' && waData.director.qr) {
       dirStatusPill.className = 'status-indicator-pill action-needed';
-      dirQRContainer.innerHTML = `<img src="${waData.director.qr}" alt="Director WhatsApp QR">`;
+      dirQRContainer.innerHTML = `<img src="${waData.director.qr}" alt="Personal WhatsApp QR">`;
     }
   }
 
@@ -312,12 +312,12 @@ function updateWhatsAppUI(waData) {
       botQRContainer.innerHTML = `
         <div style="text-align:center; color: #06b6d4;">
           <svg width="60" height="60" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-          <h4 style="margin-top:10px;">Executive Bot Active</h4>
-          <p style="font-size:0.75rem; color:#64748b;">Ready to serve Director & PA</p>
+          <h4 style="margin-top:10px;">Zoro Co-Pilot Active</h4>
+          <p style="font-size:0.75rem; color:#64748b;">Ready for conversational queries & actions</p>
         </div>`;
     } else if (status === 'SCAN_QR' && waData.bot.qr) {
       botStatusPill.className = 'status-indicator-pill action-needed';
-      botQRContainer.innerHTML = `<img src="${waData.bot.qr}" alt="Bot WhatsApp QR">`;
+      botQRContainer.innerHTML = `<img src="${waData.bot.qr}" alt="Zoro WhatsApp QR">`;
     }
   }
 }
@@ -373,9 +373,9 @@ async function loadStatus() {
     } else {
       gmailPill.textContent = 'DISCONNECTED';
       gmailPill.className = 'status-indicator-pill action-needed';
-      gmailText.textContent = 'Click "Connect with Google" to link Director\'s Gmail';
+      gmailText.textContent = 'Click "Connect with Google" to link Primary Gmail';
       if (gmailAddress) gmailAddress.textContent = 'No Gmail Connected';
-      if (gmailSub) gmailSub.textContent = 'Authorize Director inbox to enable automatic email intelligence.';
+      if (gmailSub) gmailSub.textContent = 'Authorize your inbox to enable automatic email intelligence.';
       
       if (connectBtn) connectBtn.style.display = 'inline-flex';
       if (overviewDisconnect) overviewDisconnect.style.display = 'none';
@@ -441,7 +441,7 @@ function renderScheduleItems(items, container, withDelete = false) {
       <div class="itinerary-time">${item.time_slot}</div>
       <div class="itinerary-details" style="flex: 1;">
         <h5>${escapeHtml(item.title)}</h5>
-        <div class="itinerary-loc">📍 ${escapeHtml(item.location || 'Director Office')} ${item.description ? '• ' + escapeHtml(item.description) : ''}</div>
+        <div class="itinerary-loc">📍 ${escapeHtml(item.location || 'Workspace')} ${item.description ? '• ' + escapeHtml(item.description) : ''}</div>
       </div>
       ${withDelete ? `<button class="btn btn-sm btn-danger" onclick="deleteScheduleItem(${item.id})">Delete</button>` : ''}
     </div>
@@ -548,7 +548,7 @@ async function loadWhatsAppChats() {
     if (!tbody) return;
 
     if (chats.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No WhatsApp messages ingested yet. Scan Director\'s QR code.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No WhatsApp messages ingested yet. Scan Personal WhatsApp QR code.</td></tr>';
       return;
     }
 
@@ -668,12 +668,12 @@ async function forceSyncEmails() {
 }
 
 async function generateAndSendBriefingNow() {
-  showToast('Generating Executive Intelligence PDF & dispatching to Director...');
+  showToast('Generating Zoro Intelligence PDF briefing...');
   try {
     const res = await fetch('/api/briefing/generate', { method: 'POST' });
     const data = await res.json();
     if (data.success) {
-      showToast('Executive Briefing PDF generated and delivered to Director WhatsApp!');
+      showToast('Zoro Briefing PDF generated and delivered to your WhatsApp!');
       loadLatestBriefing();
       loadStats();
     } else {
@@ -686,7 +686,7 @@ async function generateAndSendBriefingNow() {
 
 // Verification Handlers
 async function verifyAndSendDraft(id) {
-  if (!confirm('Are you sure you want to dispatch this email via the Director official Gmail?')) return;
+  if (!confirm('Are you sure you want to dispatch this email via official Gmail?')) return;
   try {
     const res = await fetch(`/api/drafts/${id}/confirm`, { method: 'POST' });
     const data = await res.json();
@@ -745,7 +745,7 @@ function setupScheduleForm() {
       });
       const data = await res.json();
       if (data.success) {
-        showToast('Meeting added to Director itinerary!');
+        showToast('Meeting added to master itinerary!');
         closeAddScheduleModal();
         form.reset();
         loadSchedules();
@@ -758,7 +758,7 @@ function setupScheduleForm() {
 }
 
 async function deleteScheduleItem(id) {
-  if (!confirm('Remove this meeting from Director itinerary?')) return;
+  if (!confirm('Remove this meeting from master itinerary?')) return;
   try {
     await fetch(`/api/schedules/${id}`, { method: 'DELETE' });
     showToast('Meeting removed.');
@@ -774,18 +774,34 @@ async function loadSettings() {
   try {
     const res = await fetch('/api/settings');
     const data = await res.json();
-    const s = data.settings;
+    const s = data.settings || {};
 
-    if (s.GEMINI_API_KEY) document.getElementById('setting-gemini-key').value = s.GEMINI_API_KEY;
-    if (s.GEMINI_MODEL) document.getElementById('setting-gemini-model').value = s.GEMINI_MODEL;
-    if (s.GOOGLE_CLIENT_ID) document.getElementById('setting-google-id').value = s.GOOGLE_CLIENT_ID;
-    if (s.GOOGLE_CLIENT_SECRET) document.getElementById('setting-google-secret').value = s.GOOGLE_CLIENT_SECRET;
-    if (s.DIRECTOR_PHONE) document.getElementById('setting-director-phone').value = s.DIRECTOR_PHONE;
-    if (s.PA_PHONE) document.getElementById('setting-pa-phone').value = s.PA_PHONE;
-    if (s.DIRECTOR_NAME) document.getElementById('setting-director-name').value = s.DIRECTOR_NAME;
-    if (s.ORGANIZATION_NAME) document.getElementById('setting-org-name').value = s.ORGANIZATION_NAME;
-    if (s.DIRECTOR_TITLE) document.getElementById('setting-director-title').value = s.DIRECTOR_TITLE;
-    if (s.BRIEFING_TIME) document.getElementById('setting-briefing-time').value = s.BRIEFING_TIME;
+    if (s.ACCESS_MODE && document.getElementById('setting-access-mode')) {
+      document.getElementById('setting-access-mode').value = s.ACCESS_MODE;
+    }
+    if (s.USER_PERSONA && document.getElementById('setting-user-persona')) {
+      document.getElementById('setting-user-persona').value = s.USER_PERSONA;
+    }
+    if (s.ASSISTANT_NAME && document.getElementById('setting-assistant-name')) {
+      document.getElementById('setting-assistant-name').value = s.ASSISTANT_NAME;
+      const navBrand = document.getElementById('nav-org-title');
+      if (navBrand) navBrand.textContent = s.ASSISTANT_NAME.toUpperCase();
+    }
+    if (s.USER_NAME && document.getElementById('setting-user-name')) {
+      document.getElementById('setting-user-name').value = s.USER_NAME;
+    }
+
+    if (s.GEMINI_API_KEY && document.getElementById('setting-gemini-key')) document.getElementById('setting-gemini-key').value = s.GEMINI_API_KEY;
+    if (s.GEMINI_MODEL && document.getElementById('setting-gemini-model')) document.getElementById('setting-gemini-model').value = s.GEMINI_MODEL;
+    if (s.GOOGLE_CLIENT_ID && document.getElementById('setting-google-id')) document.getElementById('setting-google-id').value = s.GOOGLE_CLIENT_ID;
+    if (s.GOOGLE_CLIENT_SECRET && document.getElementById('setting-google-secret')) document.getElementById('setting-google-secret').value = s.GOOGLE_CLIENT_SECRET;
+    if (s.DIRECTOR_PHONE && document.getElementById('setting-director-phone')) document.getElementById('setting-director-phone').value = s.DIRECTOR_PHONE;
+    if (s.PA_PHONE && document.getElementById('setting-pa-phone')) document.getElementById('setting-pa-phone').value = s.PA_PHONE;
+    if (s.ORGANIZATION_NAME && document.getElementById('setting-org-name')) {
+      document.getElementById('setting-org-name').value = s.ORGANIZATION_NAME;
+    }
+    if (s.DIRECTOR_TITLE && document.getElementById('setting-director-title')) document.getElementById('setting-director-title').value = s.DIRECTOR_TITLE;
+    if (s.BRIEFING_TIME && document.getElementById('setting-briefing-time')) document.getElementById('setting-briefing-time').value = s.BRIEFING_TIME;
   } catch (err) {
     console.error('Failed to load settings:', err);
   }
@@ -796,16 +812,19 @@ function setupSettingsForm() {
   form?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const payload = {
-      GEMINI_API_KEY: document.getElementById('setting-gemini-key').value,
-      GEMINI_MODEL: document.getElementById('setting-gemini-model').value,
-      GOOGLE_CLIENT_ID: document.getElementById('setting-google-id').value,
-      GOOGLE_CLIENT_SECRET: document.getElementById('setting-google-secret').value,
-      DIRECTOR_PHONE: document.getElementById('setting-director-phone').value,
-      PA_PHONE: document.getElementById('setting-pa-phone').value,
-      DIRECTOR_NAME: document.getElementById('setting-director-name')?.value || '',
-      ORGANIZATION_NAME: document.getElementById('setting-org-name').value,
-      DIRECTOR_TITLE: document.getElementById('setting-director-title').value,
-      BRIEFING_TIME: document.getElementById('setting-briefing-time').value
+      ACCESS_MODE: document.getElementById('setting-access-mode')?.value || 'universal',
+      USER_PERSONA: document.getElementById('setting-user-persona')?.value || 'universal',
+      ASSISTANT_NAME: document.getElementById('setting-assistant-name')?.value || 'Zoro AI',
+      USER_NAME: document.getElementById('setting-user-name')?.value || 'Leader',
+      GEMINI_API_KEY: document.getElementById('setting-gemini-key')?.value || '',
+      GEMINI_MODEL: document.getElementById('setting-gemini-model')?.value || 'gemini-3.7-flash',
+      GOOGLE_CLIENT_ID: document.getElementById('setting-google-id')?.value || '',
+      GOOGLE_CLIENT_SECRET: document.getElementById('setting-google-secret')?.value || '',
+      DIRECTOR_PHONE: document.getElementById('setting-director-phone')?.value || '',
+      PA_PHONE: document.getElementById('setting-pa-phone')?.value || '',
+      ORGANIZATION_NAME: document.getElementById('setting-org-name')?.value || '',
+      DIRECTOR_TITLE: document.getElementById('setting-director-title')?.value || '',
+      BRIEFING_TIME: document.getElementById('setting-briefing-time')?.value || '08:00'
     };
 
     try {
@@ -817,6 +836,10 @@ function setupSettingsForm() {
       const data = await res.json();
       if (data.success) {
         showToast('Settings saved successfully!');
+        if (payload.ASSISTANT_NAME) {
+          const navBrand = document.getElementById('nav-org-title');
+          if (navBrand) navBrand.textContent = payload.ASSISTANT_NAME.toUpperCase();
+        }
         loadStatus();
       }
     } catch (err) {
@@ -826,7 +849,7 @@ function setupSettingsForm() {
 }
 
 async function disconnectWhatsApp(sessionType) {
-  const label = sessionType === 'director' ? 'Director WhatsApp' : 'Bot WhatsApp';
+  const label = sessionType === 'director' ? 'Personal WhatsApp' : 'Zoro WhatsApp';
   if (!confirm(`Are you sure you want to disconnect ${label}? This will purge session credentials and generate a fresh pairing QR code.`)) {
     return;
   }
@@ -1036,7 +1059,7 @@ async function runWhatsAppPing(target) {
   const btnDir = document.getElementById('btn-test-ping-dir');
   const btnPa = document.getElementById('btn-test-ping-pa');
   resultBox.className = 'diag-output';
-  resultBox.textContent = `Dispatching ping message to ${target.toUpperCase()} via WhatsApp Bot...`;
+  resultBox.textContent = `Dispatching ping message to ${target.toUpperCase()} via Zoro WhatsApp...`;
   if (btnDir) btnDir.disabled = true;
   if (btnPa) btnPa.disabled = true;
 
@@ -1051,10 +1074,10 @@ async function runWhatsAppPing(target) {
     if (data.success) {
       resultBox.className = 'diag-output success';
       resultBox.textContent = `[SUCCESS]\n${data.message}\nCheck the recipient's WhatsApp for the verification text!`;
-      showToast(`Ping sent to ${target === 'pa' ? 'PA' : 'Director'} WhatsApp!`);
+      showToast(`Ping sent to ${target === 'pa' ? 'Collaborator' : 'Primary'} WhatsApp!`);
     } else {
       resultBox.className = 'diag-output error';
-      resultBox.textContent = `[ERROR]\n${data.error}\n(Make sure Bot WhatsApp QR is scanned in Connectors tab and the number is saved in Settings)`;
+      resultBox.textContent = `[ERROR]\n${data.error}\n(Make sure Zoro WhatsApp QR is scanned in Connectors tab and the number is saved in Settings)`;
       showToast(`WhatsApp ping failed: ${data.error}`);
     }
   } catch (err) {
@@ -1104,7 +1127,7 @@ async function runBriefingTest() {
   const resultBox = document.getElementById('diag-briefing-result');
   const btn = document.getElementById('btn-test-briefing');
   resultBox.className = 'diag-output';
-  resultBox.textContent = 'Generating daily PDF briefing and dispatching to Director...';
+  resultBox.textContent = 'Generating daily PDF briefing and dispatching to WhatsApp...';
   btn.disabled = true;
 
   try {
@@ -1113,7 +1136,7 @@ async function runBriefingTest() {
 
     if (data.success) {
       resultBox.className = 'diag-output success';
-      resultBox.textContent = `[SUCCESS]\nBriefing PDF Generated: ${data.filename}\nDispatched to Director WhatsApp: ${data.dispatched ? 'YES' : 'No (check bot session)'}\nSaved to: storage/briefings/`;
+      resultBox.textContent = `[SUCCESS]\nBriefing PDF Generated: ${data.filename}\nDispatched to WhatsApp: ${data.dispatched ? 'YES' : 'No (check Zoro session)'}\nSaved to: storage/briefings/`;
       showToast('Daily briefing PDF generated successfully!');
       loadLatestBriefing();
     } else {
